@@ -1,13 +1,10 @@
 import re
 import typing as t
-from copy import deepcopy
-from pathlib import Path
+from collections.abc import MutableMapping
 
 _Value = t.Union[str, float, int]
 _Values = t.Union[_Value, t.List[_Value], None]
 
-
-# TODO: create a flag controlling whether the field should be formatted with empty or default values
 
 class ProtMCfield:
     """
@@ -18,7 +15,7 @@ class ProtMCfield:
             self, field_name: str, field_values: _Values, comment: t.Optional[str] = None,
             default_value: _Values = None, format_default: bool = False):
         self.field_name = field_name
-        self.is_default = field_values is None or field_values == default_value
+        self.is_default = field_values is None or (field_values == default_value or field_values is default_value)
         self.field_values = field_values if isinstance(field_values, t.List) else [field_values]
         self.default_value = default_value
         self.format_default = format_default
@@ -37,74 +34,101 @@ class ProtMCfield:
         return f'{head}\n{body}\n{tail}'
 
 
-class ProtMCfieldGroup:
+class ProtMCfieldGroup(MutableMapping):
     """
     A meaningful group of fields of the protMC config file.
     """
 
     def __init__(self, group_name: str, group_fields: t.Iterable[ProtMCfield], comment: t.Optional[str] = None):
+        self._store = dict(zip((f.field_name for f in group_fields), group_fields))
         self.group_name = group_name
-        self.group_fields = group_fields if isinstance(group_fields, t.List) else list(group_fields)
         self.comment = comment
+
+    def __getitem__(self, item):
+        return self._store[item] if item in self._store else None
+
+    def __setitem__(self, key: str, value: _Values):
+        if key in self._store:
+            self._store[key].field_values = value if isinstance(value, t.List) else [value]
+        else:
+            self._store[key] = ProtMCfield(field_name=key, field_values=value)
+
+    def __delitem__(self, key):
+        del self._store[key]
+
+    def __iter__(self):
+        return iter(self._store)
+
+    def __len__(self):
+        return len(self._store)
 
     def __str__(self):
         return self._format()
 
-    def __repr__(self):
-        return f'Group: {self.group_name} | Num fields: {len(self.group_fields)}'
+    def __repr__(self) -> str:
+        return f'Group: {self.group_name} | Num fields: {len(self._store)}'
 
     def _format(self):
         head = f'# GROUP START: {self.group_name.upper()}\n# {self.comment}'
-        body = "\n".join([f'{field}\n' for field in self.group_fields])
+        body = "\n".join([f'{field}\n' for field in self.values()])
         tail = f'# GROUP END: {self.group_name.upper()}'
         return f'{head}\n\n{body}\n{tail}'
 
 
-class ProtMCconfig:
+class ProtMCconfig(MutableMapping):
     """
     Container for the proteus config
     """
 
     def __init__(self, mode: t.Union[str, ProtMCfield, None], groups: t.Optional[t.List[ProtMCfieldGroup]]):
         self.mode = ProtMCfield('Mode', mode, 'The mode of the Proteus run') if isinstance(mode, str) else mode
-        self.groups = groups
+        self._store = dict(zip((g.group_name for g in groups), groups))
 
-    def read(self, path: str) -> None:
-        """
-        Read a proteus config file and substitute its fields into this `ProtMCconfig` instance.
-        :param path: valid path to a config file.
-        """
-        if not Path(path).exists():
-            raise ValueError(f'Invalid path {path}')
-        with open(path) as f:
-            new = parse_config(f.read())
-        self.mode = new.mode
-        self.groups = new.groups
+    def __getitem__(self, item):
+        return self._store[item] if item in self._store else None
 
-    def dump(self, path: str, dump_default: bool = False) -> None:
-        """
-        Dump a config into a file.
-        """
-        if not self.groups:
-            raise ValueError('No groups in the config')
-        groups = deepcopy(self.groups)
-        if not dump_default:
-            for g in groups:
-                g.group_fields = [f for f in g.group_fields if not f.is_default]
-        config = ProtMCconfig(mode=self.mode, groups=groups)
-        with open(path, 'w') as f:
-            print(config._format(), file=f)
+    def __setitem__(self, key: str, value: ProtMCfieldGroup):
+        if not isinstance(value, ProtMCfieldGroup):
+            raise ValueError('Attempting to set and item that is not a field group')
+        self._store[key] = value
+
+    def __delitem__(self, key):
+        del self._store[key]
+
+    def __iter__(self):
+        return iter(self._store)
+
+    def __len__(self):
+        return len(self._store)
 
     def __str__(self) -> str:
         return self._format()
 
     def __repr__(self) -> str:
-        return f'ProtMC config with {0 if not self.groups else len(self.groups)} group(s)'
+        return f'{list(self._store)}'
 
     def _format(self) -> str:
         head = f'# {"=" * 30} PROTEUS CONFIG FILE {"=" * 30} \n\n{self.mode}\n\n'
-        body = "\n".join(f'{g}\n\n' for g in self.groups)
+        body = "\n".join(f'{g}\n\n' for g in self._store.values())
         return f'{head}\n{body}'
+
+    def change_field(self, field_name: str, field_values: _Values):
+        for g_name, group in self.items():
+            for f_name, f in group.items():
+                if f_name == field_name:
+                    self._store[g_name][f_name] = field_values
+                    break
+
+    def dump(self, path: str) -> None:
+        """
+        Dump a config into a file.
+        """
+        if not len(self):
+            raise ValueError('No groups in the config')
+        # groups = list(map(rm_defaults, self._store.values())) if not dump_default else list(self._store.values())
+        # config = ProtMCconfig(mode=self.mode, groups=groups)
+        with open(path, 'w') as f:
+            print(self._format(), file=f)
 
 
 def parse_field(field_name: str, config: str) -> t.Optional[ProtMCfield]:
@@ -192,17 +216,23 @@ def parse_config(config: str) -> ProtMCconfig:
     if not mode:
         raise ValueError('There is no <Mode> field in the provided config')
     body = parse_groups(config)
-    if not body:
+    if body is None:
         fields = parse_fields(config)
         if not fields:
             raise ValueError('No fields were found in the provided config')
-        body = ProtMCfieldGroup(
+        body = [ProtMCfieldGroup(
             group_name='GENERAL', group_fields=fields,
-            comment='General group is created in the absence of other groups')
+            comment='General group is created in the absence of other groups')]
     return ProtMCconfig(
         mode=mode,
         groups=body
     )
+
+
+def rm_defaults(group: ProtMCfieldGroup) -> ProtMCfieldGroup:
+    return ProtMCfieldGroup(
+        group_name=group.group_name,
+        group_fields=[f for f in group.values() if f.is_default])
 
 
 def load_default_config(mode: str):
@@ -226,12 +256,12 @@ def load_default_config(mode: str):
         ProtMCfield('Adapt_Output_Period', None, 'A period for outputting bias values to a file of choice'),
     )
     adapt_parameters_g = ProtMCfieldGroup(
-        group_name='ADAPT mode parameters',
+        group_name='ADAPT_PARAMS',
         group_fields=adapt_parameters,
         comment='These parameters are specific to adapt mode and control the process of the bias development'
     )
     adapt_io_g = ProtMCfieldGroup(
-        group_name='ADAPT mode IO parameters',
+        group_name='ADAPT_IO',
         group_fields=adapt_io,
         comment='Parameters controlling IO specific to the ADAPT mode'
     )
@@ -275,17 +305,17 @@ def load_default_config(mode: str):
         ProtMCfield('Energy_Output_File', 'output.ener', 'A path to a file to dump energy values', 'output.ener'),
     )
     mc_general_g = ProtMCfieldGroup(
-        group_name='MC General params',
+        group_name='MC_PARAMS',
         group_fields=mc_general,
         comment='General parameters controlling the course of the MC simulation'
     )
     mc_tweaks_g = ProtMCfieldGroup(
-        group_name='MC energy function tweaks',
+        group_name='MC_TWEAKS',
         group_fields=mc_tweaks,
         comment='Terms controlling energy function behavior; careful attitude is implied'
     )
     mc_io_g = ProtMCfieldGroup(
-        group_name='MC IO params',
+        group_name='MC_IO',
         group_fields=mc_io,
         comment='Parameters controlling IO of the MC simulation'
     )
@@ -295,7 +325,7 @@ def load_default_config(mode: str):
         ProtMCfield('Fasta_File', 'output.rich', 'Path to a .rich file with fasta-like format'),
     )
     post_fields_g = ProtMCfieldGroup(
-        group_name='POST config parameters',
+        group_name='POST_PARAMS',
         group_fields=post_fields,
         comment='Specific POST mode parameters'
     )
