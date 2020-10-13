@@ -3,6 +3,49 @@ from pathlib import Path
 
 import pandas as pd
 
+AA_DICT = """ALA A ACT
+CYS C ACT
+THR T ACT
+GLU E ED
+GLH e ED
+ASP D ED
+ASH d ED
+PHE F FW
+TRP W FW
+ILE I IVL
+VAL V IVL
+LEU L IVL
+LYS K K
+LYN k K
+MET M M
+ASN N NQ
+GLN Q NQ
+SER S S
+ARG R R
+TYR Y Y
+TYD y Y
+HID h H
+HIE j H
+HIP H H
+PRO P PG
+GLY G PG"""
+
+
+class AminoAcidDict:
+    def __init__(self, inp: str = AA_DICT):
+        self._aa_dict = self._parse_dict(inp)
+
+    @staticmethod
+    def _parse_dict(inp):
+        inp_split = [x.split() for x in inp.split('\n')]
+        return {
+            **{l[0]: l[1] for l in inp_split},
+            **{l[1]: l[0] for l in inp_split}}
+
+    @property
+    def aa_dict(self) -> t.Dict[str, str]:
+        return self._aa_dict
+
 
 def aggregate_counts(paths: t.List, temperatures: t.List[float]) -> pd.DataFrame:
     if len(paths) != len(temperatures):
