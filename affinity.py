@@ -17,6 +17,9 @@ Pair_bias = t.NamedTuple(
     'Pair_bias', [('aa_pair', AA_pair), ('bias', float)])
 
 
+# TODO: mv to post.py, provide external interface
+
+
 def count_sequences(population: str, count_threshold: int) -> t.Dict[str, float]:
     """
     Filters sequences in the `population` having >= `count_threshold` counts.

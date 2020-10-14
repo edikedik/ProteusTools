@@ -1,6 +1,8 @@
 import re
 import typing as t
 from collections.abc import MutableMapping
+from copy import deepcopy
+from itertools import chain
 
 _Value = t.Union[str, float, int]
 _Values = t.Union[_Value, t.List[_Value], None]
@@ -12,13 +14,13 @@ class ProtMCfield:
     """
 
     def __init__(
-            self, field_name: str, field_values: _Values, comment: t.Optional[str] = None,
-            default_value: _Values = None, format_default: bool = False):
+            self, field_name: str, field_values: _Values,
+            comment: t.Optional[str] = None,default_value: _Values = None):
         self.field_name = field_name
-        self.is_default = field_values is None or (field_values == default_value or field_values is default_value)
+        self.is_default = field_values == default_value or field_values is default_value
+        self.is_empty = field_values is None
         self.field_values = field_values if isinstance(field_values, t.List) else [field_values]
         self.default_value = default_value
-        self.format_default = format_default
         self.comment = comment
 
     def __str__(self):
@@ -48,10 +50,10 @@ class ProtMCfieldGroup(MutableMapping):
         return self._store[item] if item in self._store else None
 
     def __setitem__(self, key: str, value: _Values):
-        if key in self._store:
-            self._store[key].field_values = value if isinstance(value, t.List) else [value]
-        else:
-            self._store[key] = ProtMCfield(field_name=key, field_values=value)
+        default = self._store[key].default_value if key in self._store else None
+        comment = self._store[key].comment if key in self._store else None
+        self._store[key] = ProtMCfield(
+            field_name=key, field_values=value, default_value=default, comment=comment)
 
     def __delitem__(self, key):
         del self._store[key]
@@ -84,6 +86,11 @@ class ProtMCconfig(MutableMapping):
         self.mode = ProtMCfield('Mode', mode, 'The mode of the Proteus run') if isinstance(mode, str) else mode
         self._store = dict(zip((g.group_name for g in groups), groups))
 
+    @property
+    def fields(self):
+        field_gen = ((f for f in g.values()) for g in self._store.values())
+        yield from chain.from_iterable(field_gen)
+
     def __getitem__(self, item):
         return self._store[item] if item in self._store else None
 
@@ -112,21 +119,52 @@ class ProtMCconfig(MutableMapping):
         body = "\n".join(f'{g}\n\n' for g in self._store.values())
         return f'{head}\n{body}'
 
+    def copy(self):
+        return deepcopy(self)
+
+    def get_field(self, field_name: str):
+        for f in self.fields:
+            if f.field_name == field_name:
+                return f
+        return None
+
+    def get_field_value(self, field_name: str):
+        f = self.get_field(field_name)
+        if f is None:
+            return None
+        if len(f.field_values) == 1:
+            return f.field_values[0]
+        return f.field_values
+
     def change_field(self, field_name: str, field_values: _Values):
         for g_name, group in self.items():
             for f_name, f in group.items():
                 if f_name == field_name:
                     self._store[g_name][f_name] = field_values
-                    break
 
-    def dump(self, path: str) -> None:
+    def rm_field(self, field_name: str):
+        for g_name, group in self.items():
+            try:
+                del self._store[g_name][field_name]
+            except KeyError:
+                pass
+
+    def rm_empty_fields(self):
+        for f in [f.field_name for f in self.fields if f.is_empty]:
+            self.rm_field(f)
+
+    def rm_default_fields(self):
+        for f in [f.field_name for f in self.fields if f.is_default]:
+            self.rm_field(f)
+
+    def dump(self, path: str, rm_empty: bool = True) -> None:
         """
         Dump a config into a file.
         """
         if not len(self):
             raise ValueError('No groups in the config')
-        # groups = list(map(rm_defaults, self._store.values())) if not dump_default else list(self._store.values())
-        # config = ProtMCconfig(mode=self.mode, groups=groups)
+        if rm_empty:
+            self.rm_empty_fields()
         with open(path, 'w') as f:
             print(self._format(), file=f)
 
@@ -138,7 +176,7 @@ def parse_field(field_name: str, config: str) -> t.Optional[ProtMCfield]:
     :param config: a string with a config chunk
     :return: None if captured nothing else `ProtMCfield` object
     """
-    pattern = re.compile(f'(#([\w\s]+)\n)?<{field_name}>\n((.|\n)*)\n<\/{field_name}>')
+    pattern = re.compile(f'(#(.*?)\n)?<{field_name}>\n((.|\n)*)\n<\/{field_name}>')
     try:
         capture = re.findall(pattern, config)[0]
     except IndexError:
@@ -164,7 +202,7 @@ def parse_fields(config: str) -> t.Optional[t.List[ProtMCfield]]:
             comment=match[1] if match[1] else None
         )
 
-    pattern = re.compile(r'(#([\w\s]+)\n)?<(\w+)>\n((.|\n)*)\n<\/(\3)>')
+    pattern = re.compile(r'(#(.*?)\n)?<(\w+)>\n((.|\n)*)\n<\/(\3)>')
     capture = re.findall(pattern, config)
     if not capture:
         return None
@@ -302,7 +340,7 @@ def load_default_config(mode: str):
         ProtMCfield('Seq_Input_File', None, 'Path to existing state (.seq file) to continue the simulation from', None),
         ProtMCfield('Seq_Output_File', 'output.seq', 'The file to output a `trajectory` of sampled sequences',
                     'output.seq'),
-        ProtMCfield('Energy_Output_File', 'output.ener', 'A path to a file to dump energy values', 'output.ener'),
+        ProtMCfield('Ener_Output_File', 'output.ener', 'A path to a file to dump energy values', 'output.ener'),
     )
     mc_general_g = ProtMCfieldGroup(
         group_name='MC_PARAMS',
@@ -321,6 +359,7 @@ def load_default_config(mode: str):
     )
     # =========== POST mode fields and groups =========================================================================
     post_fields = (
+        ProtMCfield('Energy_Directory', '../matrix', 'A path to a directory holding energy matrix files', None),
         ProtMCfield('Seq_Input_File', None, 'Path to existing state (.seq file) to continue the simulation from'),
         ProtMCfield('Fasta_File', 'output.rich', 'Path to a .rich file with fasta-like format'),
     )
@@ -340,7 +379,7 @@ def load_default_config(mode: str):
             groups=[mc_general_g, mc_io_g, mc_tweaks_g]
         ),
         'POST': ProtMCconfig(
-            mode='POST',
+            mode='POSTPROCESS',
             groups=[post_fields_g]
         )
     }

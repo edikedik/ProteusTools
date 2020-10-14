@@ -63,8 +63,8 @@ def validate_path(path: str) -> str:
 
 def parse_proteus_dat(path: str, temp) -> pd.DataFrame:
     def parse_line(line: str) -> t.Tuple[str, int]:
-        seq, count = line.split('.')[3].split()[1:3]
-        return seq, int(count)
+        seq, count_ = line.split('.')[3].split()[1:3]
+        return seq, int(count_)
 
     with open(path) as f:
         parsed_lines = [parse_line(l) for l in f]
