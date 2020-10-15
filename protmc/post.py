@@ -7,7 +7,7 @@ from itertools import islice, takewhile, starmap, count
 import pandas as pd
 
 
-def analyze(seq: str, rich: str, steps: int, active: t.List[int]):
+def analyze(seq: str, rich: str, steps: int, active: t.Optional[t.List[int]] = None):
     Entry = namedtuple('entry', ['seq_entry', 'rich_entry'])
     Parsed_entry = namedtuple('parsed_entry', ['seq', 'counts', 'energy'])
 
