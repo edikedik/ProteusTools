@@ -11,9 +11,10 @@ from tqdm import tqdm
 from protmc import config
 from protmc.post import analyze
 from protmc.runner import Runner
+from protmc.utils import count_sequences
 
 Summary = namedtuple('summary', [
-    'num_unique', 'coverage',
+    'num_unique', 'num_unique_merged', 'coverage',
     'seq_prob_mean', 'seq_prob_std', 'seq_prob_rss'])
 
 
@@ -156,14 +157,19 @@ class Pipeline:
         self.results = df
 
         # compose the summary
+        counts = count_sequences(df['seq'])
         self.summary = Summary(
             num_unique=len(df),
-            coverage=len(df) / 26 ** len(active) if active else len(df['seq'][0]),
+            num_unique_merged=counts,
+            coverage=counts / 18 ** len(active) if active else len(df['seq'][0]),
             seq_prob_mean=df['seq_prob'].mean(),
             seq_prob_std=df['seq_prob'].std(),
             seq_prob_rss=((df['seq_prob'] - 1 / len(df)) ** 2).sum()
         )
         return self.summary
+
+    def continue_run(self, mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None):
+        pass
 
 
 class Search:

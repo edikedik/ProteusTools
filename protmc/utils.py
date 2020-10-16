@@ -46,6 +46,10 @@ class AminoAcidDict:
     def aa_dict(self) -> t.Dict[str, str]:
         return self._aa_dict
 
+    @property
+    def proto_mapping(self) -> t.Dict[str, str]:
+        return {'e': 'E', 'd': 'D', 'k': 'K', 'y': 'Y', 'j': 'H', 'h': 'H'}
+
 
 def aggregate_counts(paths: t.List, temperatures: t.List[float]) -> pd.DataFrame:
     if len(paths) != len(temperatures):
@@ -75,6 +79,19 @@ def parse_proteus_dat(path: str, temp) -> pd.DataFrame:
         'temp': [temp] * len(parsed_lines),
         'file': [path] * len(parsed_lines)
     })
+
+
+def count_sequences(seqs: t.Iterable[str]) -> int:
+    """
+    Merges sequence protonation states and counts the number of unique sequences.
+    The function is needed to properly calculate coverage of the sequence space.
+    :param seqs: a collection of protein sequences
+    :return: a number of unique sequences
+    """
+    proto_mapping = AminoAcidDict().proto_mapping
+    mapped_seqs = (
+        "".join(proto_mapping[c] if c in proto_mapping else c for c in s) for s in seqs)
+    return len(set(mapped_seqs))
 
 
 if __name__ == '__main__':

@@ -41,3 +41,7 @@ def analyze(seq: str, rich: str, steps: int, active: t.Optional[t.List[int]] = N
         df['seq_prob'] = df['total_count'] / steps * 100
 
     return df.reset_index(drop=True)
+
+
+if __name__ == '__main__':
+    raise RuntimeError
