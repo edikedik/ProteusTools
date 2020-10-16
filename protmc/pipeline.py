@@ -3,15 +3,15 @@ from collections import namedtuple
 from copy import deepcopy
 from itertools import chain, combinations, count, starmap
 from pathlib import Path
-from multiprocess.pool import Pool
 
 import pandas as pd
+from multiprocess.pool import Pool
 from tqdm import tqdm
 
 from protmc import config
 from protmc.post import analyze
 from protmc.runner import Runner
-from protmc.utils import count_sequences
+from protmc.utils import count_sequences, get_bias_state
 
 Summary = namedtuple('summary', [
     'num_unique', 'num_unique_merged', 'coverage',
@@ -105,18 +105,19 @@ class Pipeline:
         return deepcopy(self)
 
     def _change_config(self, changes: t.List[t.Tuple[str, t.Any]], conf_type: str = 'MC'):
-        conf = self.mc_conf if conf_type else self.post_conf
+        conf = self.mc_conf if conf_type == 'MC' else self.post_conf
         for f_name, f_value in changes:
             conf.change_field(f_name, f_value)
 
-    def setup(self, mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None):
+    def setup(self, mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None, continuation: bool = False):
         # setup working directory and configs
         self.exp_dir = setup_exp_dir(self.base_dir, self.exp_dir_name)
-        mc_conf = setup_mc_io(self.base_mc_conf, self.exp_dir, self.energy_dir)
+        self.mc_conf = setup_mc_io(
+            self.mc_conf if continuation else self.base_mc_conf,
+            self.exp_dir, self.energy_dir)
         # modify base config values
         if mc_config_changes:
             self._change_config(changes=mc_config_changes)
-        self.mc_conf = mc_conf
         self.post_conf = setup_post_io(self.base_post_conf, self.mc_conf, self.exp_dir)
         self.ran_setup = True
 
@@ -154,22 +155,54 @@ class Pipeline:
             df.to_csv(f'{self.base_dir}/{self.exp_dir_name}/{dump_name}', sep='\t', index=False)
 
         # store the results internally
-        self.results = df
+        self.results = pd.concat([self.results, df]) if isinstance(self.results, pd.DataFrame) else df
 
         # compose the summary
-        counts = count_sequences(df['seq'])
+        counts = count_sequences(self.results['seq'])
         self.summary = Summary(
-            num_unique=len(df),
+            num_unique=len(self.results['seq'].unique()),
             num_unique_merged=counts,
-            coverage=counts / 18 ** len(active) if active else len(df['seq'][0]),
-            seq_prob_mean=df['seq_prob'].mean(),
-            seq_prob_std=df['seq_prob'].std(),
-            seq_prob_rss=((df['seq_prob'] - 1 / len(df)) ** 2).sum()
+            coverage=counts / 18 ** len(active) if active else len(self.results['seq'][0]),
+            seq_prob_mean=self.results['seq_prob'].mean(),
+            seq_prob_std=self.results['seq_prob'].std(),
+            seq_prob_rss=((self.results['seq_prob'] - 1 / len(self.results)) ** 2).sum()
         )
         return self.summary
 
-    def continue_run(self, mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None):
-        pass
+    def continue_run(
+            self, new_exp_name: str, bias_step: int,
+            dump_results: bool = True, dump_name: str = 'SUMMARY.tsv',
+            mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None) -> Summary:
+        """
+        Continue the run using previously developed bias.
+        The results of the previous and the current run will be concatenated,
+        and the summary will be computed on this concatenation.
+
+        :param new_exp_name: the name of the new experiment (must be different from the previous experiment name)
+        :param bias_step: the step to continue from
+        :param dump_results: dump results of the current (!) run in the experiment directory
+        :param dump_name: name of the dump file (passed to the `run` method)
+        :param mc_config_changes: changes passed to the `run` method
+        :return: Summary namedtuple with basic computed over the results
+        """
+        self.exp_dir_name = new_exp_name
+        bias_path = self.mc_conf.get_field_value('Adapt_Output_File')
+        bias = get_bias_state(bias_path, bias_step)
+        if not bias:
+            raise ValueError(f'Could not find the step {bias_step} in the {bias_path}')
+        mode = self.mc_conf.mode.field_values[0]
+
+        bias_path = f'{self.base_dir}/{self.exp_dir_name}/{mode}.dat.inp'
+        with open(bias_path, 'w') as f:
+            print(bias, file=f)
+
+        self.mc_conf['MC_IO']['Bias_Input_File'] = config.ProtMCfield(
+            field_name='Bias_Input_File',
+            field_values=bias_path,
+            comment='Path to a file with existing bias potential'
+        )
+        self.setup(mc_config_changes=mc_config_changes, continuation=True)
+        return self.run(dump_results=dump_results, dump_name=dump_name)
 
 
 class Search:

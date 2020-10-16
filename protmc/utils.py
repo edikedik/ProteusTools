@@ -1,5 +1,7 @@
 import typing as t
+from itertools import dropwhile, takewhile
 from pathlib import Path
+import subprocess as sp
 
 import pandas as pd
 
@@ -92,6 +94,38 @@ def count_sequences(seqs: t.Iterable[str]) -> int:
     mapped_seqs = (
         "".join(proto_mapping[c] if c in proto_mapping else c for c in s) for s in seqs)
     return len(set(mapped_seqs))
+
+
+def read_seq_states(seq_file: str, steps: int) -> t.Optional[str]:
+    """
+    :param seq_file: path to a .seq file
+    :param steps: the steps to extract
+    :return:
+    """
+    with open(seq_file) as f:
+        s = [l for i, l in enumerate(f) if i in steps]
+    return s or None
+
+
+def get_seq_state(seq_file: str, step: int) -> t.Optional[str]:
+    with open(seq_file) as f:
+        f.readline()
+        s = [line for line in f if int(line.split()[0]) == step]
+    return s[0] if s else None
+
+
+def get_bias_state(bias_file: str, step: int) -> t.Optional[str]:
+    with open(bias_file) as f:
+        lines = dropwhile(lambda l: l.startswith('#') and int(l.rstrip().split()[2]) == step, f)
+        bias = "".join(takewhile(lambda l: not l.startswith('#'), lines))
+    return bias or None
+
+
+def tail(filename: str, n: int):
+    res = sp.run(f'tail -{n} {filename}', capture_output=True, text=True, shell=True)
+    if res.stderr:
+        raise ValueError(f'Failed with an error {res.stderr}')
+    return res.stdout
 
 
 if __name__ == '__main__':

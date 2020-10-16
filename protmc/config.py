@@ -15,7 +15,7 @@ class ProtMCfield:
 
     def __init__(
             self, field_name: str, field_values: _Values,
-            comment: t.Optional[str] = None,default_value: _Values = None):
+            comment: t.Optional[str] = None, default_value: _Values = None):
         self.field_name = field_name
         self.is_default = field_values == default_value or field_values is default_value
         self.is_empty = field_values is None
@@ -49,11 +49,14 @@ class ProtMCfieldGroup(MutableMapping):
     def __getitem__(self, item):
         return self._store[item] if item in self._store else None
 
-    def __setitem__(self, key: str, value: _Values):
-        default = self._store[key].default_value if key in self._store else None
-        comment = self._store[key].comment if key in self._store else None
-        self._store[key] = ProtMCfield(
-            field_name=key, field_values=value, default_value=default, comment=comment)
+    def __setitem__(self, key: str, value: t.Union[_Values, ProtMCfield]):
+        if isinstance(value, ProtMCfield):
+            self._store[key] = value
+        else:
+            default = self._store[key].default_value if key in self._store else None
+            comment = self._store[key].comment if key in self._store else None
+            self._store[key] = ProtMCfield(
+                field_name=key, field_values=value, default_value=default, comment=comment)
 
     def __delitem__(self, key):
         del self._store[key]
