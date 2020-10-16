@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess as sp
 
 import pandas as pd
+import seaborn as sns
 
 AA_DICT = """ALA A ACT
 CYS C ACT
@@ -41,8 +42,8 @@ class AminoAcidDict:
     def _parse_dict(inp):
         inp_split = [x.split() for x in inp.split('\n')]
         return {
-            **{l[0]: l[1] for l in inp_split},
-            **{l[1]: l[0] for l in inp_split}}
+            **{line[0]: line[1] for line in inp_split},
+            **{line[1]: line[0] for line in inp_split}}
 
     @property
     def aa_dict(self) -> t.Dict[str, str]:
@@ -53,34 +54,10 @@ class AminoAcidDict:
         return {'e': 'E', 'd': 'D', 'k': 'K', 'y': 'Y', 'j': 'H', 'h': 'H'}
 
 
-def aggregate_counts(paths: t.List, temperatures: t.List[float]) -> pd.DataFrame:
-    if len(paths) != len(temperatures):
-        raise ValueError(f'Unequal lengths of `paths` ({len(paths)}) and `temperatures` ({len(temperatures)}).')
-    return pd.concat(
-        [parse_proteus_dat(p, temp) for p, temp in zip(map(validate_path, paths), temperatures)]
-    )
-
-
 def validate_path(path: str) -> str:
     if not Path(path).exists():
         raise ValueError(f'Invalid path {path}')
     return path
-
-
-def parse_proteus_dat(path: str, temp) -> pd.DataFrame:
-    def parse_line(line: str) -> t.Tuple[str, int]:
-        seq, count_ = line.split('.')[3].split()[1:3]
-        return seq, int(count_)
-
-    with open(path) as f:
-        parsed_lines = [parse_line(l) for l in f]
-
-    return pd.DataFrame({
-        'seq': [x[0] for x in parsed_lines],
-        'num_count': [x[1] for x in parsed_lines],
-        'temp': [temp] * len(parsed_lines),
-        'file': [path] * len(parsed_lines)
-    })
 
 
 def count_sequences(seqs: t.Iterable[str]) -> int:
@@ -128,5 +105,19 @@ def tail(filename: str, n: int):
     return res.stdout
 
 
-if __name__ == '__main__':
-    raise RuntimeError()
+def bias_to_df(bias_file: str) -> pd.DataFrame:
+    df = pd.read_csv(
+        bias_file,
+        sep=r'\s+', skiprows=1,
+        names=['pos1', 'aa1', 'pos2', 'aa2', 'bias'],
+        dtype={'pos1': str, 'pos2': str},
+        comment='#').dropna()
+    df['Var'] = ['-'.join([x.pos1, x.aa1, x.pos2, x.aa2]) for x in df.itertuples()]
+    return df
+
+
+def plot_bias_timeline(bias_file: str):
+    pass
+
+    if __name__ == '__main__':
+        raise RuntimeError()
