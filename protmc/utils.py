@@ -100,7 +100,7 @@ def get_bias_state(bias_file: str, step: int) -> t.Optional[str]:
     return None if not body else bias
 
 
-def tail(filename: str, n: int):
+def tail(filename: str, n: int) -> str:
     res = sp.run(f'tail -{n} {filename}', capture_output=True, text=True, shell=True)
     if res.stderr:
         raise ValueError(f'Failed with an error {res.stderr}')

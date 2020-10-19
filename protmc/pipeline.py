@@ -1,15 +1,15 @@
 import typing as t
 from collections import namedtuple
 from copy import deepcopy
-from itertools import chain, combinations, count, starmap
+from glob import glob
+from itertools import chain
+from os import remove
 from pathlib import Path
 
 import pandas as pd
-from multiprocess.pool import Pool
-from tqdm import tqdm
 
 from protmc import config
-from protmc.post import analyze
+from protmc.post import analyze_seq
 from protmc.runner import Runner
 from protmc.utils import count_sequences, get_bias_state
 
@@ -80,16 +80,16 @@ class Pipeline:
             exe_path: str, base_dir: str, exp_dir_name: str, energy_dir: str,
             active_pos: t.Optional[t.Iterable[int]] = None, mut_space_size: int = 18):
         """
-            :param base_mc_conf: base config for the MC/ADAPT mode
-            :param base_post_conf: base config for the POSTPROCESS mode
-            :param exe_path: a path to a protMC executable
-            :param base_dir: a name of a base directory for the experiment
-            :param exp_dir_name: a name of the experiment
-            :param energy_dir: a path to an energy directory with matrices
-            :param active_pos: active positions (allowed to mutate)
-            :param mut_space_size: the number of available types in the mutation space, excluding protonation states.
-            :return:
-            """
+        :param base_mc_conf: base config for the MC/ADAPT mode
+        :param base_post_conf: base config for the POSTPROCESS mode
+        :param exe_path: a path to a protMC executable
+        :param base_dir: a name of a base directory for the experiment
+        :param exp_dir_name: a name of the experiment
+        :param energy_dir: a path to an energy directory with matrices
+        :param active_pos: active positions (allowed to mutate)
+        :param mut_space_size: the number of available types in the mutation space, excluding protonation states.
+        :return:
+        """
         self.base_mc_conf = base_mc_conf
         self.base_post_conf = base_post_conf
         self.exe_path = exe_path
@@ -145,11 +145,10 @@ class Pipeline:
             active = self.active_pos
 
         # aggregate the results
-        df = analyze(
-            seq=self.post_conf.get_field_value('Seq_Input_File'),
-            rich=self.post_conf.get_field_value('Fasta_File'),
-            steps=int(self.mc_conf.get_field_value('Trajectory_Length')),
-            active=active)
+        df = analyze_seq(seq=self.post_conf.get_field_value('Seq_Input_File'),
+                         rich=self.post_conf.get_field_value('Fasta_File'),
+                         steps=int(self.mc_conf.get_field_value('Trajectory_Length')),
+                         active=active)
         df['exp'] = self.exp_dir_name
 
         # optionally dump the results into the experiment directory
@@ -208,63 +207,13 @@ class Pipeline:
         self.setup(mc_config_changes=mc_config_changes, continuation=True)
         return self.run(dump_results=dump_results, dump_name=dump_name)
 
-
-class Search:
-    def __init__(self, pipeline: Pipeline, grid: t.Dict[str, t.List[t.Any]]):
-        self.pipeline = pipeline
-        self.grid = grid
-        self.results = None
-
-    def _grid_generator(self):
-        params = chain.from_iterable(
-            ((k, v) for v in values) for k, values in self.grid.items())
-        comb = filter(
-            lambda c: len(set(x[0] for x in c)) == len(self.grid),
-            combinations(params, r=len(self.grid)))
-        yield from comb
-
-    def grid_search(self, dump_results: bool = False, verbose: bool = True):
-        SearchSummary = namedtuple('SearchSummary', list(self.grid) + list(Summary._fields))
-        param_comb = self._grid_generator()
-        if verbose:
-            param_comb = tqdm(param_comb, desc='Grid_Search ')
-        self.results = []
-        for i, comb in enumerate(param_comb):
-            self.pipeline.setup(mc_config_changes=list(comb))
-            summary = self.pipeline.run(
-                dump_results=dump_results,
-                dump_name=f'SUMMARY_grid{i}.tsv')
-            self.results.append(SearchSummary(
-                *(val for param, val in comb),
-                *summary))
-        return pd.DataFrame(self.results)
-
-    def grid_search_parallel(self, verbose: bool = True, n: int = 2):
-        SearchSummary = namedtuple('SearchSummary', list(self.grid) + list(Summary._fields))
-        param_comb = self._grid_generator()
-        if verbose:
-            param_comb = tqdm(param_comb, desc='Grid_Search:>')
-        pipes = (self.pipeline.copy() for _ in count())
-        if n > 1:
-            with Pool(n) as workers:
-                results = workers.starmap(self._run_pipe, zip(pipes, param_comb))
-        else:
-            results = starmap(self._run_pipe, zip(pipes, param_comb))
-        self.results = [
-            SearchSummary(
-                *(val for _, val in comb), *s)
-            for comb, s in zip(self._grid_generator(), results)
-        ]
-        return pd.DataFrame(self.results)
-
-    @staticmethod
-    def _run_pipe(pipe: Pipeline, param_changes):
-        dirname = "_".join([f'{x[0]}-{x[1]}' for x in param_changes])
-        pipe.base_dir = f'{pipe.base_dir}/{pipe.exp_dir_name}'
-        pipe.exp_dir_name = dirname
-        pipe.setup(mc_config_changes=list(param_changes))
-        summary = pipe.run()
-        return summary
+    def cleanup(self, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), leave_names: t.Tuple[str, ...] = ()):
+        files = glob(f'{self.exp_dir}/*')
+        if not files:
+            raise ValueError(f'No files are found in experiment directory {self.exp_dir}')
+        for p in files:
+            if p.split('/')[-1] in leave_names or p.split('.')[-1] in leave_ext and Path(p).is_file():
+                remove(p)
 
 
 if __name__ == '__main__':
