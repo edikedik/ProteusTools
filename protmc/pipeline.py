@@ -78,7 +78,7 @@ class Pipeline:
     def __init__(
             self, base_mc_conf: config.ProtMCconfig, base_post_conf: config.ProtMCconfig,
             exe_path: str, base_dir: str, exp_dir_name: str, energy_dir: str,
-            active_pos: t.Optional[t.Iterable[int]] = None):
+            active_pos: t.Optional[t.Iterable[int]] = None, mut_space_size: int = 18):
         """
             :param base_mc_conf: base config for the MC/ADAPT mode
             :param base_post_conf: base config for the POSTPROCESS mode
@@ -87,6 +87,7 @@ class Pipeline:
             :param exp_dir_name: a name of the experiment
             :param energy_dir: a path to an energy directory with matrices
             :param active_pos: active positions (allowed to mutate)
+            :param mut_space_size: the number of available types in the mutation space, excluding protonation states.
             :return:
             """
         self.base_mc_conf = base_mc_conf
@@ -100,6 +101,7 @@ class Pipeline:
         self.mc_runner, self.post_runner = None, None
         self.results, self.summary = None, None
         self.ran_setup = False
+        self.mutation_space_size = mut_space_size
 
     def copy(self):
         return deepcopy(self)
@@ -162,7 +164,8 @@ class Pipeline:
         self.summary = Summary(
             num_unique=len(self.results['seq'].unique()),
             num_unique_merged=counts,
-            coverage=counts / 18 ** len(active) if active else len(self.results['seq'][0]),
+            coverage=counts / (self.mutation_space_size ** (
+                len(active) if active else len(self.results['seq'][0]))),
             seq_prob_mean=self.results['seq_prob'].mean(),
             seq_prob_std=self.results['seq_prob'].std(),
             seq_prob_rss=((self.results['seq_prob'] - 1 / len(self.results)) ** 2).sum()
@@ -192,6 +195,7 @@ class Pipeline:
             raise ValueError(f'Could not find the step {bias_step} in the {bias_path}')
         mode = self.mc_conf.mode.field_values[0]
 
+        Path(f'{self.base_dir}/{self.exp_dir_name}').mkdir(exist_ok=True, parents=True)
         bias_path = f'{self.base_dir}/{self.exp_dir_name}/{mode}.dat.inp'
         with open(bias_path, 'w') as f:
             print(bias, file=f)

@@ -277,7 +277,7 @@ def rm_defaults(group: ProtMCfieldGroup) -> ProtMCfieldGroup:
 
 
 def load_default_config(mode: str):
-    if mode not in ['MC', 'ADAPT', 'POST']:
+    if mode not in ['MONTECARLO', 'ADAPT', 'POST']:
         raise ValueError(f'Unsupported mode {mode}')
 
     # ================ Adaptive mode fields and groups ================================================================
@@ -377,8 +377,8 @@ def load_default_config(mode: str):
             mode='ADAPT',
             groups=[adapt_parameters_g, adapt_io_g, mc_general_g, mc_io_g, mc_tweaks_g]
         ),
-        'MC': ProtMCconfig(
-            mode='MC',
+        'MONTECARLO': ProtMCconfig(
+            mode='MONTECARLO',
             groups=[mc_general_g, mc_io_g, mc_tweaks_g]
         ),
         'POST': ProtMCconfig(

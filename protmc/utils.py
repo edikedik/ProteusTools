@@ -93,9 +93,11 @@ def get_seq_state(seq_file: str, step: int) -> t.Optional[str]:
 
 def get_bias_state(bias_file: str, step: int) -> t.Optional[str]:
     with open(bias_file) as f:
-        lines = dropwhile(lambda l: l.startswith('#') and int(l.rstrip().split()[2]) == step, f)
-        bias = "".join(takewhile(lambda l: not l.startswith('#'), lines))
-    return bias or None
+        lines = dropwhile(lambda l: not (l.startswith('#') and int(l.rstrip().split()[2]) == step), f)
+        comment = next(lines)
+        body = "".join(takewhile(lambda l: not l.startswith('#'), lines))
+        bias = comment + body
+    return None if not body else bias
 
 
 def tail(filename: str, n: int):
