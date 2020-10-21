@@ -1,10 +1,12 @@
-import typing as t
-from itertools import dropwhile, takewhile
-from pathlib import Path
 import subprocess as sp
+import typing as t
+from itertools import dropwhile, takewhile, combinations
+from pathlib import Path
 
+import biotite.structure as bst
+import biotite.structure.io as io
+import numpy as np
 import pandas as pd
-import seaborn as sns
 
 AA_DICT = """ALA A ACT
 CYS C ACT
@@ -121,5 +123,17 @@ def bias_to_df(bias_file: str) -> pd.DataFrame:
 def plot_bias_timeline(bias_file: str):
     pass
 
-    if __name__ == '__main__':
-        raise RuntimeError()
+
+def interacting_pairs(structure_path: str, distance_threshold: float, positions: t.Optional[t.Iterable[int]] = None):
+    st = io.load_structure(structure_path)
+    ca = st[(st.atom_name == 'CA') & bst.filter_amino_acids(st)]
+    if positions is not None:
+        ca = ca[np.isin(ca.res_id, list(positions))]
+    pairs = np.array(list(combinations(ca.res_id, 2)))
+    pairs_idx = np.array(list(combinations(np.arange(len(ca)), 2)))
+    dist = bst.index_distance(ca, pairs_idx)
+    return pairs[dist < distance_threshold]
+
+
+if __name__ == '__main__':
+    raise RuntimeError()
