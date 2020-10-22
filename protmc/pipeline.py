@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from protmc import config
-from protmc.post import analyze_seq, compose_summary, Summary
+from protmc.post import analyze_seq_no_rich, compose_summary, Summary
 from protmc.runner import Runner
 from protmc.utils import get_bias_state
 
@@ -71,7 +71,7 @@ class Pipeline:
     """
 
     def __init__(
-            self, base_mc_conf: config.ProtMCconfig, base_post_conf: config.ProtMCconfig,
+            self, base_mc_conf: config.ProtMCconfig, base_post_conf: t.Optional[config.ProtMCconfig],
             exe_path: str, base_dir: str, exp_dir_name: str, energy_dir: str,
             active_pos: t.Optional[t.Iterable[int]] = None, mut_space_size: int = 18):
         """
@@ -115,7 +115,8 @@ class Pipeline:
         # modify base config values
         if mc_config_changes:
             self._change_config(changes=mc_config_changes)
-        self.post_conf = setup_post_io(self.base_post_conf, self.mc_conf, self.exp_dir)
+        if self.base_post_conf:
+            self.post_conf = setup_post_io(self.base_post_conf, self.mc_conf, self.exp_dir)
         self.ran_setup = True
 
     def run(self, dump_results: bool = True, dump_name: str = 'RESULTS.tsv') -> Summary:
@@ -123,10 +124,10 @@ class Pipeline:
             self.setup()
 
         self.mc_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.mc_conf)
-        self.post_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.post_conf)
-
         self.mc_runner.run()
-        self.post_runner.run()
+        if self.base_post_conf or self.post_conf:
+            self.post_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.post_conf)
+            self.post_runner.run()
 
         # attempt to infer active positions
         if self.active_pos is None:
@@ -140,10 +141,10 @@ class Pipeline:
             active = self.active_pos
 
         # aggregate the results
-        df = analyze_seq(seq=self.post_conf.get_field_value('Seq_Input_File'),
-                         rich=self.post_conf.get_field_value('Fasta_File'),
-                         steps=int(self.mc_conf.get_field_value('Trajectory_Length')),
-                         active=active)
+        df = analyze_seq_no_rich(
+            seq_path=self.mc_conf.get_field_value('Seq_Output_File'),
+            matrix_bb=f'{self.energy_dir}/matrix.bb', active=active,
+            steps=int(self.mc_conf.get_field_value('Trajectory_Length')))
         df['exp'] = self.exp_dir_name
 
         # optionally dump the results into the experiment directory
@@ -197,7 +198,9 @@ class Pipeline:
         if not files:
             raise ValueError(f'No files are found in experiment directory {self.exp_dir}')
         for p in files:
-            if p.split('/')[-1] in leave_names or p.split('.')[-1] in leave_ext and Path(p).is_file():
+            in_leave = p.split('/')[-1] in leave_names
+            ext_valid = p.split('.')[-1] in leave_ext
+            if not (in_leave or ext_valid):
                 remove(p)
 
 
