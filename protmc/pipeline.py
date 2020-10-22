@@ -1,5 +1,4 @@
 import typing as t
-from collections import namedtuple
 from copy import deepcopy
 from glob import glob
 from itertools import chain
@@ -9,13 +8,9 @@ from pathlib import Path
 import pandas as pd
 
 from protmc import config
-from protmc.post import analyze_seq
+from protmc.post import analyze_seq, compose_summary, Summary
 from protmc.runner import Runner
-from protmc.utils import count_sequences, get_bias_state
-
-Summary = namedtuple('summary', [
-    'num_unique', 'num_unique_merged', 'coverage',
-    'seq_prob_mean', 'seq_prob_std', 'seq_prob_rss'])
+from protmc.utils import get_bias_state
 
 
 def setup_exp_dir(base_dir: str, name: str) -> str:
@@ -123,7 +118,7 @@ class Pipeline:
         self.post_conf = setup_post_io(self.base_post_conf, self.mc_conf, self.exp_dir)
         self.ran_setup = True
 
-    def run(self, dump_results: bool = True, dump_name: str = 'SUMMARY.tsv') -> Summary:
+    def run(self, dump_results: bool = True, dump_name: str = 'RESULTS.tsv') -> Summary:
         if not self.ran_setup:
             self.setup()
 
@@ -159,17 +154,7 @@ class Pipeline:
         self.results = pd.concat([self.results, df]) if isinstance(self.results, pd.DataFrame) else df
 
         # compose the summary
-        counts = count_sequences(self.results['seq'])
-        self.summary = Summary(
-            num_unique=len(self.results['seq'].unique()),
-            num_unique_merged=counts,
-            coverage=counts / (self.mutation_space_size ** (
-                len(active) if active else len(self.results['seq'][0]))),
-            seq_prob_mean=self.results['seq_prob'].mean(),
-            seq_prob_std=self.results['seq_prob'].std(),
-            seq_prob_rss=((self.results['seq_prob'] - 1 / len(self.results)) ** 2).sum()
-        )
-        return self.summary
+        return compose_summary(results=self.results, mut_space_size=self.mutation_space_size, num_active=len(active))
 
     def continue_run(
             self, new_exp_name: str, bias_step: int,
