@@ -138,13 +138,15 @@ def matrix_mappings(matrix_bb: str):
 
 
 def _agg_results(results: pd.DataFrame, steps):
+    # TODO: mean energy is not currently correct -- should be counts * energy / nsteps
     df = results.groupby('seq', as_index=False).agg(
-        total_count=pd.NamedAgg(column='counts', aggfunc='count'),
-        avg_energy=pd.NamedAgg(column='energy', aggfunc='mean'),
+        total_count=pd.NamedAgg(column='counts', aggfunc='sum'),
+        # avg_energy=pd.NamedAgg(column='energy', aggfunc='mean'),
         min_energy=pd.NamedAgg(column='energy', aggfunc='min'),
         max_energy=pd.NamedAgg(column='energy', aggfunc='max'))
     df['seq_prob'] = df['total_count'] / steps
-    return df.reset_index(drop=True)
+    return df.reset_index(drop=True)[
+        ['seq', 'total_count', 'seq_prob', 'min_energy', 'max_energy']]
 
 
 if __name__ == '__main__':

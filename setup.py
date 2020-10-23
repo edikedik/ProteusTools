@@ -13,7 +13,7 @@ setup(
         'tqdm>=4.50.2',
         'seaborn>=0.11.0'
     ],
-    scripts=[
-        'affinity.py'
-    ]
+    #scripts=[
+        #'affinity.py'
+    #]
 )

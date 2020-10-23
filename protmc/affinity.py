@@ -50,7 +50,7 @@ def count_sequences_df(population: pd.DataFrame, count_threshold: int) -> t.Mapp
     df = population.copy()
     df = df[df['total_count'] > count_threshold]
     df['frequency'] = df['total_count'] / df['total_count'].sum()
-    return pd.Series(df['frequency'], index=df['seq']).to_dict()
+    return pd.Series(df['frequency'].values, index=df['seq']).to_dict()
 
 
 def parse_bias(bias_in: str) -> t.Dict[AA_pair, float]:
@@ -66,11 +66,11 @@ def parse_bias(bias_in: str) -> t.Dict[AA_pair, float]:
         pos_i, aa_i, pos_j, aa_j, bias = line_split
         return (
             Pair_bias(AA_pair(pos_i, pos_j, aa_i, aa_j), float(bias)),
-            Pair_bias(AA_pair(pos_j, pos_i, aa_j, aa_i), float(bias)))
+            Pair_bias(AA_pair(pos_j, pos_i, aa_j, aa_i), float(bias) if pos_i != pos_j else 0.0))
 
     with open(bias_in) as f:
         lines = chain.from_iterable(map(parse_line, filter(lambda x: not x.startswith('#'), f)))
-        groups = groupby(lines, lambda el: el.aa_pair)
+        groups = groupby(sorted(lines, key=lambda el: el.aa_pair), lambda el: el.aa_pair)
         return {g: sum(x.bias for x in gg) for g, gg in groups}
 
 
@@ -87,7 +87,7 @@ def compute_bias_energy(
     """
     pairs = product(zip(positions, sequence), repeat=2)
     pairs = (AA_pair(aa1[0], aa2[0], aa_mapping[aa1[1]], aa_mapping[aa2[1]]) for aa1, aa2 in pairs)
-    pairs = filter(lambda pair: pair in bias, pairs)
+    pairs = filter(lambda pair: pair in bias and pair.pos_j <= pair.pos_i, pairs)
     return -sum(bias[pair] for pair in pairs)
 
 
@@ -113,6 +113,9 @@ def energy(
     fb, fu = freq_bound[sequence], freq_unbound[sequence]
     eb = -temp * log(fb) - bb
     eu = -temp * log(fu) - bu
+    # print(sequence, temp,
+    #       f"bias bu: {round(bu, 2)} bias_bb: {round(bb, 2)} pu_seq: {round(fu, 2)} pb_seq: {round(fb, 2)} "
+    #       f"bind_seq_b: {round(eb, 2)} bind_seq_u: {round(eu, 2)} bind_seq: {round(eb - eu, 2)}")
     return eb - eu
 
 
@@ -120,7 +123,7 @@ def affinity(
         reference_seq: str,
         pop_unbound: t.Union[str, pd.DataFrame], pop_bound: t.Union[str, pd.DataFrame],
         bias_unbound: str, bias_bound: str,
-        temperature: float, threshold: int, positions: t.Iterable[str]):
+        temperature: float, threshold: int, positions: t.Iterable[str]) -> t.List[t.Tuple[str, float]]:
     """
     Computes affinity for all sequences common to both "bound" and "unbound" populations
         relative to a reference sequence.
@@ -139,19 +142,23 @@ def affinity(
     freq_b = (count_sequences(pop_bound, threshold)
               if isinstance(pop_bound, str) else count_sequences_df(pop_bound, threshold))
     freq_u = (count_sequences(pop_unbound, threshold)
-              if isinstance(pop_bound, str) else count_sequences_df(pop_bound, threshold))
+              if isinstance(pop_unbound, str) else count_sequences_df(pop_unbound, threshold))
+    # print("pop_bound\n", sorted(freq_b.items()), "\n", "pop_unbound\n", sorted(freq_u.items()))
     # Identify sequences common to both populations
     common_ub = set(freq_b) & set(freq_u)
 
     # Parse bias files
     bias_b = parse_bias(bias_bound) if bias_bound else None
     bias_u = parse_bias(bias_unbound) if bias_unbound else None
+    # print('bias_bound\n', sorted(bias_b.items()), '\n', 'bias_unbound\n', sorted(bias_u.items()))
 
+    # Energy helper
     energy_ = partial(
         energy, positions=positions,
         freq_bound=freq_b, freq_unbound=freq_u,
         bias_bound=bias_b, bias_unbound=bias_u,
         temp=temperature, aa_mapping=AminoAcidDict().aa_dict)
+    # Energy of a reference sequence
     e_ref = energy_(sequence=reference_seq)
 
     return [(s, energy_(sequence=s) - e_ref) for s in common_ub]
@@ -173,7 +180,7 @@ def _affinity(pop_unbound, pop_bound, bias_unbound, bias_bound, temperature, thr
     """
     Command calculates relative affinities of the sequences using biased populations (proteus.dat files)
     in bound and unbound states.
-    # TODO: move this interface to the root ./proteus.py
+    # TODO: move this interface to the root ./proteus.py (does not work for now)
     It accepts paths to POP_UNBOUND and POP_BOUND as positional arguments, and the rest is customized via options.
 
     """

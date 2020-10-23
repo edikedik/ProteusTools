@@ -135,5 +135,21 @@ def interacting_pairs(structure_path: str, distance_threshold: float, positions:
     return pairs[dist < distance_threshold]
 
 
+def get_reference(position_list: str, positions: t.Optional[t.Container[str]] = None) -> str:
+    """
+    Extract the reference sequence from the matrix file.
+    :param position_list: position_list file with four columns
+    (pdb_seq_id, active/inactive, aa3, n_rotamers)
+    :param positions: a set of positions to subset the reference (optional)
+    :return:
+    """
+    aa_mapping = AminoAcidDict().aa_dict
+    with open(position_list) as f:
+        split = filter(lambda l: len(l) == 4, map(lambda l: l.split(), f))
+        if positions:
+            split = filter(lambda l: l[0] in positions, split)
+        return "".join(aa_mapping[l[2]] for l in split)
+
+
 if __name__ == '__main__':
     raise RuntimeError()

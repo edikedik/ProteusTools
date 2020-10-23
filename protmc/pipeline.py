@@ -97,6 +97,7 @@ class Pipeline:
         self.results, self.summary = None, None
         self.ran_setup = False
         self.mutation_space_size = mut_space_size
+        self.default_results_dump_name = 'RESULTS.tsv'
 
     def copy(self):
         return deepcopy(self)
@@ -119,9 +120,11 @@ class Pipeline:
             self.post_conf = setup_post_io(self.base_post_conf, self.mc_conf, self.exp_dir)
         self.ran_setup = True
 
-    def run(self, dump_results: bool = True, dump_name: str = 'RESULTS.tsv') -> Summary:
+    def run(self, dump_results: bool = True, dump_name: t.Optional[str] = None) -> Summary:
         if not self.ran_setup:
             self.setup()
+        if not dump_name:
+            dump_name = self.default_results_dump_name
 
         self.mc_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.mc_conf)
         self.mc_runner.run()
@@ -155,11 +158,13 @@ class Pipeline:
         self.results = pd.concat([self.results, df]) if isinstance(self.results, pd.DataFrame) else df
 
         # compose the summary
-        return compose_summary(results=self.results, mut_space_size=self.mutation_space_size, num_active=len(active))
+        self.summary = compose_summary(
+            results=self.results, mut_space_size=self.mutation_space_size, num_active=len(active))
+        return self.summary
 
     def continue_run(
             self, new_exp_name: str, bias_step: int,
-            dump_results: bool = True, dump_name: str = 'SUMMARY.tsv',
+            dump_results: bool = True, dump_name: t.Optional[str] = None,
             mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None) -> Summary:
         """
         Continue the run using previously developed bias.
