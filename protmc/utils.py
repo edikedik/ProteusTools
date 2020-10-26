@@ -1,6 +1,7 @@
 import subprocess as sp
 import typing as t
-from itertools import dropwhile, takewhile, combinations
+from functools import reduce
+from itertools import dropwhile, takewhile, combinations, groupby, chain, filterfalse
 from pathlib import Path
 
 import biotite.structure as bst
@@ -34,6 +35,8 @@ HIE j H
 HIP H H
 PRO P PG
 GLY G PG"""
+
+T = t.TypeVar('T')
 
 
 class AminoAcidDict:
@@ -149,6 +152,50 @@ def get_reference(position_list: str, positions: t.Optional[t.Container[str]] = 
         if positions:
             split = filter(lambda l: l[0] in positions, split)
         return "".join(aa_mapping[l[2]] for l in split)
+
+
+def space_constraints(
+        reference: str, subset: t.Iterable[int], active: t.Iterable[int],
+        existing_constraints: t.Optional[t.List[str]] = None) -> t.List[str]:
+    mapping = AminoAcidDict().aa_dict
+    if not isinstance(subset, t.List):
+        subset = list(subset)
+    if not isinstance(active, t.List):
+        active = list(active)
+    if len(active) != len(reference):
+        raise ValueError('Length of a reference must match the number of active positions')
+
+    inactive = list(set(active) - set(subset))
+    if not inactive:
+        raise ValueError('Nothing to constrain')
+    inactive_idx = [active.index(pos) for pos in inactive]
+    ref_subset = [reference[i] for i in inactive_idx]
+    constraints = sorted(
+        [f'{pos} {mapping[aa]}' for pos, aa in zip(inactive, ref_subset)],
+        key=lambda x: int(x.split()[0]))
+    if existing_constraints:
+        constraints = merge_constraints(existing=existing_constraints, additional=constraints)
+    return constraints
+
+
+def merge_constraints(existing: t.List[str], additional: t.List[str]):
+    total = sorted(existing + additional, key=lambda x: int(x.split()[0]))
+    groups = groupby(total, lambda x: int(x.split()[0]))
+    return [f'{g} ' + " ".join(set(chain.from_iterable(x.split()[1:] for x in gg))) for g, gg in groups]
+
+
+def extract_constraints(configs: t.Iterable):
+    constraints_ = filterfalse(
+        lambda x: x is None,
+        (c.get_field_value('Space_Constraints') for c in configs))
+    constraints_ = ([c] if isinstance(c, str) else c for c in constraints_)
+    return reduce(lambda x, y: merge_constraints(x, y), constraints_)
+
+
+def adapt_space(pos: t.Union[T, t.Iterable[T]]) -> t.Union[t.List[str], str]:
+    if isinstance(pos, int):
+        return f'{pos}-{pos}'
+    return [f'{p1}-{p2}' for p1, p2 in set(combinations(map(str, pos), 2))]
 
 
 if __name__ == '__main__':

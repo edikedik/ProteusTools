@@ -1,5 +1,6 @@
 import typing as t
 from collections import namedtuple
+from copy import deepcopy
 from itertools import chain, combinations, count, starmap
 from pathlib import Path
 
@@ -7,10 +8,15 @@ import pandas as pd
 from multiprocess.pool import Pool
 from tqdm import tqdm
 
-from protmc.pipeline import Pipeline, Summary
-from protmc.affinity import affinity
-from protmc.utils import get_reference, get_bias_state
 from protmc import config
+from protmc import utils as u
+from protmc.affinity import affinity
+from protmc.pipeline import Pipeline, Summary
+
+_WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
+WorkerSummary = t.NamedTuple(
+    'WorkerSummary', [('apo_adapt', Summary), ('apo_mc', Summary), ('holo_adapt', Summary), ('holo_mc', Summary)])
+# TODO: add docs
 
 
 class ParamSearch:
@@ -73,21 +79,88 @@ class ParamSearch:
 
 class AffinitySearch:
     def __init__(
-            self, positions,
-            apo_setup,
-            holo_setup,
-            exe_path, base_dir):
-        self.positions = positions
-        self.apo_setup = apo_setup
-        self.holo_setup = holo_setup
+            self, positions: t.Iterable[t.Union[t.Collection[int], int]], active: t.List[int], ref_seq: str,
+            apo_base_setup: _WorkerSetup, holo_base_setup: _WorkerSetup, base_post_cfg: config.ProtMCconfig,
+            exe_path: str, base_dir: str, mut_space_size: int = 18, count_threshold: int = 10,
+            adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC'):
+        self.apo_base_setup, self.holo_base_setup = apo_base_setup, holo_base_setup
+        self.base_post_cfg = base_post_cfg
         self.exe_path = exe_path
         self.base_dir = base_dir
+        self.mut_space_size = mut_space_size
+        self.count_threshold = count_threshold
+        self.adapt_dir_name, self.mc_dir_name = adapt_dir_name, mc_dir_name
+        self.positions = positions
+        if not isinstance(positions, t.Tuple):
+            self.positions = tuple(self.positions)
+        if len(active) != len(ref_seq):
+            raise ValueError('Length of the reference sequence has to match the number of active positions')
+        self.active = active
+        self.ref_seq = ref_seq
+        self.ran_setup, self.ran_workers = False, False
+        self.workers = None
+        self.workers_results, self.worker_affinities = None, None
+
+    def setup_workers(self):
+        self.workers = [self._setup_worker(active_subset=s) for s in self.positions]
+        self.ran_setup = True
+
+    def run_workers(self, num_proc: int = 1):
+        # TODO: try to maximize num_proc by default
+        if not self.ran_setup:
+            self.setup_workers()
+        if num_proc > 1:
+            with Pool(num_proc) as workers:
+                self.workers_results = workers.map(lambda w: w.run(parallel=False), self.workers)
+        else:
+            self.workers_results = [w.run(parallel=False) for w in self.workers]
+        return self.workers_results
+
+    def _setup_worker(self, active_subset: t.Union[t.List[int], int]):
+        # copy and extract base configs
+        apo_adapt_cfg, apo_mc_cfg, apo_matrix = deepcopy(self.apo_base_setup)
+        holo_adapt_cfg, holo_mc_cfg, holo_matrix = deepcopy(self.holo_base_setup)
+
+        # compose main varying parameters for the AffinityWorker
+        existing_constraints = u.extract_constraints([apo_adapt_cfg, apo_mc_cfg, holo_adapt_cfg, holo_mc_cfg])
+        constraints = u.space_constraints(
+            reference=self.ref_seq, subset=active_subset, active=self.active,
+            existing_constraints=existing_constraints or None)
+        adapt_space = u.adapt_space(active_subset)
+
+        # put varying parameters into configs
+        apo_adapt_cfg['ADAPT_PARAMS']['Adapt_Space'] = holo_adapt_cfg['ADAPT_PARAMS']['Adapt_Space'] = adapt_space
+        for cfg in [apo_adapt_cfg, apo_mc_cfg, holo_adapt_cfg, holo_mc_cfg]:
+            cfg['MC_PARAMS']['Space_Constraints'] = constraints
+        exp_dir_name = "-".join(map(str, active_subset)) if isinstance(active_subset, t.Iterable) else active_subset
+        # setup and return worker
+        worker = AffinityWorker(
+            apo_setup=(apo_adapt_cfg, apo_mc_cfg, apo_matrix),
+            holo_setup=(holo_adapt_cfg, holo_mc_cfg, holo_matrix),
+            base_post_cfg=self.base_post_cfg, active_pos=self.active,
+            mut_space_size=self.mut_space_size, exe_path=self.exe_path,
+            run_dir=f'{self.base_dir}/{exp_dir_name}',
+            count_threshold=self.count_threshold,
+            adapt_dir_name=self.adapt_dir_name, mc_dir_name=self.mc_dir_name)
+        worker.setup()
+        return worker
+
+    def workers_affinity(self):
+        def try_results(worker: AffinityWorker) -> t.Optional[t.List[t.Tuple[str, float]]]:
+            try:
+                return worker.affinity()
+            except KeyError:
+                return None
+        self.worker_affinities = [try_results(w) for w in self.workers]
+        return self.worker_affinities
 
 
 class AffinityWorker:
     def __init__(
-            self, apo_setup, holo_setup, base_post_cfg, active_pos, mut_space_size, exe_path, run_dir,
-            count_threshold: int = 10, adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC'):
+            self, apo_setup: _WorkerSetup, holo_setup: _WorkerSetup, base_post_cfg: config.ProtMCconfig,
+            active_pos: t.Iterable[int], exe_path: str, run_dir: str,
+            mut_space_size: int = 18, count_threshold: int = 10,
+            adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC'):
         self.apo_adapt_cfg, self.apo_mc_cfg, self.apo_matrix_path = apo_setup
         self.holo_adapt_cfg, self.holo_mc_cfg, self.holo_matrix_path = holo_setup
         self.base_post_cfg = base_post_cfg
@@ -132,7 +205,7 @@ class AffinityWorker:
 
         self.ran_setup = True
 
-    def run(self, parallel: bool = True) -> None:
+    def run(self, parallel: bool = True) -> WorkerSummary:
         if not self.ran_setup:
             self.setup()
         if parallel:
@@ -151,6 +224,9 @@ class AffinityWorker:
             self.apo_mc_summary, self.holo_mc_summary = map(
                 lambda p: p.run(), [self.apo_mc_pipe, self.holo_mc_pipe])
         self.ran_pipes = True
+        return WorkerSummary(
+            apo_adapt=self.apo_adapt_summary, apo_mc=self.apo_mc_summary,
+            holo_adapt=self.holo_mc_summary, holo_mc=self.holo_mc_summary)
 
     def _get_temperature(self):
         # Run only after pipes has been setup
@@ -167,7 +243,7 @@ class AffinityWorker:
             output_period = adapt_cfg.get_field_value('Adapt_Output_Period')
             n_steps = adapt_cfg.get_field_value('Trajectory_Length')
             last_step = (n_steps // output_period) * output_period
-            bias = get_bias_state(bias_path, last_step)
+            bias = u.get_bias_state(bias_path, last_step)
             bias_path_new = f'{mc_pipe.exp_dir}/ADAPT.inp'
             with open(bias_path_new, 'w') as f:
                 print(bias.rstrip(), file=f)
@@ -197,7 +273,7 @@ class AffinityWorker:
                 position_list = holo_pos
             else:
                 raise RuntimeError('Could not find position_list.dat in matrix directories.')
-        ref_seq = get_reference(position_list, active)
+        ref_seq = u.get_reference(position_list, active)
         if not ref_seq:
             raise RuntimeError('Reference sequence is empty')
 

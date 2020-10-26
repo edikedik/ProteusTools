@@ -67,6 +67,7 @@ def compose_summary(results: pd.DataFrame, mut_space_size: int, num_active: t.Op
     :param num_active: a number of active positions
     :return: Summary namedtuple object
     """
+    # TODO: coverage is incorrect if space constraints are employed
     counts = count_sequences(results['seq'])
     num_active = num_active or len(results['seq'][0])
     return Summary(
