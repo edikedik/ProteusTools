@@ -118,6 +118,11 @@ class Pipeline:
             self._change_config(changes=mc_config_changes)
         if self.base_post_conf:
             self.post_conf = setup_post_io(self.base_post_conf, self.mc_conf, self.exp_dir)
+        # init runners (this will also dump config files)
+        self.mc_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.mc_conf)
+        if self.base_post_conf or self.post_conf:
+            self.post_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.post_conf)
+        # flip the flag on
         self.ran_setup = True
 
     def run(self, dump_results: bool = True, dump_name: t.Optional[str] = None) -> Summary:
@@ -126,10 +131,9 @@ class Pipeline:
         if not dump_name:
             dump_name = self.default_results_dump_name
 
-        self.mc_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.mc_conf)
+        # Run the calculations
         self.mc_runner.run()
         if self.base_post_conf or self.post_conf:
-            self.post_runner = Runner(run_dir=self.exp_dir, exe_path=self.exe_path, config=self.post_conf)
             self.post_runner.run()
 
         # attempt to infer active positions

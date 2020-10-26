@@ -17,12 +17,12 @@ class Runner:
         self._config = config
         self._mode = config.mode.field_values[0]
         self._config_path = f'{run_dir}/{self._mode}.conf'
+        self._config.dump(self._config_path)
         self._log_path = log_path or f'{run_dir}/{self._mode}.log'
         self._run_command = f'{self._exe_path} < {self._config_path} > {self._log_path}'
 
     def run(self):
         try:
-            self._config.dump(self._config_path)
             sp.run(self._run_command, shell=True, check=True)
         except sp.CalledProcessError as e:
             output = sp.run(self._run_command, shell=True, check=False, capture_output=True, text=True)
