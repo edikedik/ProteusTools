@@ -58,22 +58,19 @@ def analyze_seq(
     return df
 
 
-def compose_summary(results: pd.DataFrame, mut_space_size: int, num_active: t.Optional[int] = None):
+def compose_summary(results: pd.DataFrame, mut_space_size: int):
     """
     Further aggregate the results dataframe outputted by `analyze_seq` or `analyze_seq_no_rich`
         to provide the summary of the run (see the Summary object for the list of fields)
     :param results: a results DataFrame
-    :param mut_space_size: a number of types in the mutation space
-    :param num_active: a number of active positions
+    :param mut_space_size: a correct size of the mutation space computed externally
     :return: Summary namedtuple object
     """
-    # TODO: coverage is incorrect if space constraints are employed
     counts = count_sequences(results['seq'])
-    num_active = num_active or len(results['seq'][0])
     return Summary(
         num_unique=len(results['seq'].unique()),
         num_unique_merged=counts,
-        coverage=counts / (mut_space_size ** num_active),
+        coverage=counts / mut_space_size,
         seq_prob_mean=results['seq_prob'].mean(),
         seq_prob_std=results['seq_prob'].std(),
         seq_prob_rss=((results['seq_prob'] - 1 / len(results)) ** 2).sum())

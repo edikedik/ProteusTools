@@ -16,6 +16,7 @@ AA_pair = t.NamedTuple(
     'AA_pair', [('pos_i', str), ('pos_j', str), ('aa_i', str), ('aa_j', str)])
 Pair_bias = t.NamedTuple(
     'Pair_bias', [('aa_pair', AA_pair), ('bias', float)])
+AffinityResult = t.NamedTuple('AffinityResults', [('seq', str), ('affinity', float)])
 
 
 def count_sequences(population: str, count_threshold: int) -> t.Dict[str, float]:
@@ -69,7 +70,7 @@ def parse_bias(bias_in: str) -> t.Dict[AA_pair, float]:
             Pair_bias(AA_pair(pos_j, pos_i, aa_j, aa_i), float(bias) if pos_i != pos_j else 0.0))
 
     with open(bias_in) as f:
-        lines = chain.from_iterable(map(parse_line, filter(lambda x: not x.startswith('#'), f)))
+        lines = chain.from_iterable(map(parse_line, filter(lambda x: not (x.startswith('#') or x == '\n'), f)))
         groups = groupby(sorted(lines, key=lambda el: el.aa_pair), lambda el: el.aa_pair)
         return {g: sum(x.bias for x in gg) for g, gg in groups}
 
@@ -123,7 +124,7 @@ def affinity(
         reference_seq: str,
         pop_unbound: t.Union[str, pd.DataFrame], pop_bound: t.Union[str, pd.DataFrame],
         bias_unbound: str, bias_bound: str,
-        temperature: float, threshold: int, positions: t.Iterable[str]) -> t.List[t.Tuple[str, float]]:
+        temperature: float, threshold: int, positions: t.Iterable[str]) -> pd.DataFrame:
     """
     Computes affinity for all sequences common to both "bound" and "unbound" populations
         relative to a reference sequence.
@@ -161,7 +162,7 @@ def affinity(
     # Energy of a reference sequence
     e_ref = energy_(sequence=reference_seq)
 
-    return [(s, energy_(sequence=s) - e_ref) for s in common_ub]
+    return pd.DataFrame([AffinityResult(s, energy_(sequence=s) - e_ref) for s in common_ub])
 
 
 @click.command()

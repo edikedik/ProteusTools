@@ -10,7 +10,7 @@ import pandas as pd
 from protmc import config
 from protmc.post import analyze_seq_no_rich, compose_summary, Summary
 from protmc.runner import Runner
-from protmc.utils import get_bias_state
+from protmc.utils import get_bias_state, infer_mut_space
 
 
 def setup_exp_dir(base_dir: str, name: str) -> str:
@@ -73,7 +73,7 @@ class Pipeline:
     def __init__(
             self, base_mc_conf: config.ProtMCconfig, base_post_conf: t.Optional[config.ProtMCconfig],
             exe_path: str, base_dir: str, exp_dir_name: str, energy_dir: str,
-            active_pos: t.Optional[t.Iterable[int]] = None, mut_space_size: int = 18):
+            active_pos: t.Sequence[int], mut_space_n_types: int = 18):
         """
         :param base_mc_conf: base config for the MC/ADAPT mode
         :param base_post_conf: base config for the POSTPROCESS mode
@@ -82,7 +82,7 @@ class Pipeline:
         :param exp_dir_name: a name of the experiment
         :param energy_dir: a path to an energy directory with matrices
         :param active_pos: active positions (allowed to mutate)
-        :param mut_space_size: the number of available types in the mutation space, excluding protonation states.
+        :param mut_space_n_types: the number of available types in the mutation space.
         :return:
         """
         self.base_mc_conf = base_mc_conf
@@ -92,11 +92,12 @@ class Pipeline:
         self.exp_dir_name = exp_dir_name
         self.energy_dir = energy_dir
         self.active_pos = active_pos
+        self.mut_space_n_types = mut_space_n_types
         self.mc_conf, self.post_conf, self.exp_dir = None, None, None
         self.mc_runner, self.post_runner = None, None
         self.results, self.summary = None, None
         self.ran_setup = False
-        self.mutation_space_size = mut_space_size
+        self.mut_space_size = None
         self.default_results_dump_name = 'RESULTS.tsv'
 
     def copy(self):
@@ -162,8 +163,12 @@ class Pipeline:
         self.results = pd.concat([self.results, df]) if isinstance(self.results, pd.DataFrame) else df
 
         # compose the summary
+        existing_constraints = self.mc_conf.get_field_value('Space_Constraints')
+        self.mut_space_size = infer_mut_space(
+            self.mut_space_n_types, len(self.active_pos),
+            [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
         self.summary = compose_summary(
-            results=self.results, mut_space_size=self.mutation_space_size, num_active=len(active))
+            results=self.results, mut_space_size=self.mut_space_size)
         return self.summary
 
     def continue_run(
@@ -190,7 +195,7 @@ class Pipeline:
         mode = self.mc_conf.mode.field_values[0]
 
         Path(f'{self.base_dir}/{self.exp_dir_name}').mkdir(exist_ok=True, parents=True)
-        bias_path = f'{self.base_dir}/{self.exp_dir_name}/{mode}.dat.inp'
+        bias_path = f'{self.base_dir}/{self.exp_dir_name}/{mode}.inp.dat'
         with open(bias_path, 'w') as f:
             print(bias, file=f)
 

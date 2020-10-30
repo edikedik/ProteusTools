@@ -1,3 +1,4 @@
+import operator as op
 import subprocess as sp
 import typing as t
 from functools import reduce
@@ -178,17 +179,19 @@ def space_constraints(
     return constraints
 
 
-def merge_constraints(existing: t.List[str], additional: t.List[str]):
+def merge_constraints(existing: t.List[str], additional: t.List[str]) -> t.List[str]:
     total = sorted(existing + additional, key=lambda x: int(x.split()[0]))
     groups = groupby(total, lambda x: int(x.split()[0]))
     return [f'{g} ' + " ".join(set(chain.from_iterable(x.split()[1:] for x in gg))) for g, gg in groups]
 
 
-def extract_constraints(configs: t.Iterable):
+def extract_constraints(configs: t.Iterable) -> t.Optional[t.List[str]]:
     constraints_ = filterfalse(
         lambda x: x is None,
         (c.get_field_value('Space_Constraints') for c in configs))
-    constraints_ = ([c] if isinstance(c, str) else c for c in constraints_)
+    constraints_ = [[c] if isinstance(c, str) else c for c in constraints_]
+    if not constraints_:
+        return None
     return reduce(lambda x, y: merge_constraints(x, y), constraints_)
 
 
@@ -196,6 +199,16 @@ def adapt_space(pos: t.Union[T, t.Iterable[T]]) -> t.Union[t.List[str], str]:
     if isinstance(pos, int):
         return f'{pos}-{pos}'
     return [f'{p1}-{p2}' for p1, p2 in set(combinations(map(str, pos), 2))]
+
+
+def infer_mut_space(mut_space_n_types: int, num_active: int, constraints: t.Optional[t.List[str]]):
+    num_mut = [mut_space_n_types] * num_active
+    if constraints:
+        if len(constraints) > num_active:
+            raise ValueError('More constrained positions than active ones')
+        for i, c in enumerate(constraints):
+            num_mut[i] = len(c.split()[1:])
+    return reduce(op.mul, num_mut)
 
 
 if __name__ == '__main__':

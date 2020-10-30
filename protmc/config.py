@@ -145,6 +145,12 @@ class ProtMCconfig(MutableMapping):
                 if f_name == field_name:
                     self._store[g_name][f_name] = field_values
 
+    def set_field(self, group_name:str, field_name: str, field_values: _Values, comment: t.Optional[str] = None):
+        if group_name not in self._store:
+            raise ValueError(f'No group with {group_name} is present in config')
+        self._store[group_name][field_name] = ProtMCfield(
+            field_name=field_name, field_values=field_values, comment=comment)
+
     def rm_field(self, field_name: str):
         for g_name, group in self.items():
             try:
@@ -331,6 +337,7 @@ def load_default_config(mode: str):
         ProtMCfield('GB_Neighbor_Threshold', 0.0, 'Distance threshold to take into account for solvation radii', 0.0),
         ProtMCfield('Protein_Dielectric', 4.0, 'Dielectric constant values (FDB method)', 4.0),
         ProtMCfield('Reset_Energies', 100, 'Frequency of recomputing energies from scratch', 100),
+        # TODO: protMC doesn't recognize these two param
         ProtMCfield('Solv_Neighbor_Threshold', 0.0, 'An energy threshold for neighbors (FDB method)', 0.0),
         ProtMCfield('Surf_Energy_Factor', 1.0, 'A factor multiplying the surface energy term', 1.0),
     )

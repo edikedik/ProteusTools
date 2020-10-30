@@ -17,6 +17,7 @@ _WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
 WorkerSummary = t.NamedTuple(
     'WorkerSummary', [('apo_adapt', Summary), ('apo_mc', Summary), ('holo_adapt', Summary), ('holo_mc', Summary)])
 # TODO: add docs
+AffinityResults = t.NamedTuple('AffinityResults', [('run_dir', str), ('affinity', float)])
 
 
 class ParamSearch:
@@ -81,13 +82,13 @@ class AffinitySearch:
     def __init__(
             self, positions: t.Iterable[t.Union[t.Collection[int], int]], active: t.List[int], ref_seq: str,
             apo_base_setup: _WorkerSetup, holo_base_setup: _WorkerSetup, base_post_cfg: config.ProtMCconfig,
-            exe_path: str, base_dir: str, mut_space_size: int = 18, count_threshold: int = 10,
+            exe_path: str, base_dir: str, mut_space_n_types: int = 18, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC'):
         self.apo_base_setup, self.holo_base_setup = apo_base_setup, holo_base_setup
         self.base_post_cfg = base_post_cfg
         self.exe_path = exe_path
         self.base_dir = base_dir
-        self.mut_space_size = mut_space_size
+        self.mut_space_n_types = mut_space_n_types
         self.count_threshold = count_threshold
         self.adapt_dir_name, self.mc_dir_name = adapt_dir_name, mc_dir_name
         self.positions = positions
@@ -98,8 +99,9 @@ class AffinitySearch:
         self.active = active
         self.ref_seq = ref_seq
         self.ran_setup, self.ran_workers = False, False
-        self.workers = None
-        self.workers_results, self.worker_affinities = None, None
+        self.workers: t.Optional[t.List[AffinityWorker]] = None
+        self.results: t.Optional[t.List[WorkerSummary]] = None
+        self.affinities: t.Optional[pd.DataFrame] = None
 
     def setup_workers(self):
         self.workers = [self._setup_worker(active_subset=s) for s in self.positions]
@@ -111,10 +113,10 @@ class AffinitySearch:
             self.setup_workers()
         if num_proc > 1:
             with Pool(num_proc) as workers:
-                self.workers_results = workers.map(lambda w: w.run(parallel=False), self.workers)
+                self.results = workers.map(lambda w: w.run(parallel=False), self.workers)
         else:
-            self.workers_results = [w.run(parallel=False) for w in self.workers]
-        return self.workers_results
+            self.results = [w.run(parallel=False) for w in self.workers]
+        return self.results
 
     def _setup_worker(self, active_subset: t.Union[t.List[int], int]):
         # copy and extract base configs
@@ -138,34 +140,56 @@ class AffinitySearch:
             apo_setup=(apo_adapt_cfg, apo_mc_cfg, apo_matrix),
             holo_setup=(holo_adapt_cfg, holo_mc_cfg, holo_matrix),
             base_post_cfg=self.base_post_cfg, active_pos=self.active,
-            mut_space_size=self.mut_space_size, exe_path=self.exe_path,
+            mut_space_n_types=self.mut_space_n_types, exe_path=self.exe_path,
             run_dir=f'{self.base_dir}/{exp_dir_name}',
             count_threshold=self.count_threshold,
             adapt_dir_name=self.adapt_dir_name, mc_dir_name=self.mc_dir_name)
         worker.setup()
         return worker
 
-    def workers_affinity(self):
-        def try_results(worker: AffinityWorker) -> t.Optional[t.List[t.Tuple[str, float]]]:
+    def workers_affinities(
+            self, dump: bool = True, dump_name: str = 'AFFINITY.tsv',
+            num_proc: int = 1, verbose: bool = False) -> pd.DataFrame:
+        def try_results(worker: AffinityWorker) -> t.Optional[pd.DataFrame]:
             try:
                 return worker.affinity()
             except KeyError:
                 return None
-        self.worker_affinities = [try_results(w) for w in self.workers]
-        return self.worker_affinities
+
+        def wrap_results(worker: AffinityWorker, results: t.Optional[pd.DataFrame]):
+            if results is None:
+                return pd.DataFrame({'run_dir': [worker.run_dir], 'seq': [None], 'affinity': [None]})
+            results['pos'] = worker.run_dir.split('/')[-1]
+            return results
+        workers = tqdm(self.workers) if verbose else self.workers
+        if num_proc > 1:
+            with Pool(num_proc) as pool:
+                results = pool.map(try_results, workers)
+        else:
+            results = list(map(try_results, workers))
+        self.affinities = pd.concat([wrap_results(w, r) for w, r in zip(self.workers, results)])
+        if dump:
+            self.affinities.to_csv(f'{self.base_dir}/{dump_name}', sep='\t', index=False)
+        return self.affinities
+
+    def analyze_affinities(self, energy_threshold, num_threshold):
+        if self.affinities is None:
+            raise ValueError('`affinities` attribute is empty')
+        df = self.affinities.sort_values('affinity', descending=False).groupby('pos')
+        df = df.head(num_threshold) if num_threshold is not None else df[df['affinity'] >= energy_threshold]
 
 
 class AffinityWorker:
     def __init__(
             self, apo_setup: _WorkerSetup, holo_setup: _WorkerSetup, base_post_cfg: config.ProtMCconfig,
             active_pos: t.Iterable[int], exe_path: str, run_dir: str,
-            mut_space_size: int = 18, count_threshold: int = 10,
+            mut_space_n_types: int = 18, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC'):
         self.apo_adapt_cfg, self.apo_mc_cfg, self.apo_matrix_path = apo_setup
         self.holo_adapt_cfg, self.holo_mc_cfg, self.holo_matrix_path = holo_setup
         self.base_post_cfg = base_post_cfg
         self.active_pos = active_pos
-        self.mut_space_size = mut_space_size
+        self.mut_space_n_types = mut_space_n_types
         self.exe_path = exe_path
         self.run_dir = run_dir
         self.count_threshold = count_threshold
@@ -182,7 +206,7 @@ class AffinityWorker:
         def create_pipe(cfg, base_dir, exp_dir, energy_dir):
             return Pipeline(
                 base_post_conf=self.base_post_cfg, exe_path=self.exe_path,
-                mut_space_size=self.mut_space_size, active_pos=self.active_pos,
+                mut_space_n_types=self.mut_space_n_types, active_pos=list(self.active_pos),
                 base_mc_conf=cfg, base_dir=base_dir, exp_dir_name=exp_dir, energy_dir=energy_dir)
 
         base_apo, base_holo = f'{self.run_dir}/apo', f'{self.run_dir}/holo'
@@ -224,6 +248,7 @@ class AffinityWorker:
             self.apo_mc_summary, self.holo_mc_summary = map(
                 lambda p: p.run(), [self.apo_mc_pipe, self.holo_mc_pipe])
         self.ran_pipes = True
+        # TODO: maybe return DataFrame or provide an option to use df
         return WorkerSummary(
             apo_adapt=self.apo_adapt_summary, apo_mc=self.apo_mc_summary,
             holo_adapt=self.holo_mc_summary, holo_mc=self.holo_mc_summary)
@@ -260,7 +285,7 @@ class AffinityWorker:
         self.apo_mc_cfg = self.apo_mc_pipe.mc_conf.copy()
         self.holo_mc_cfg = self.holo_mc_pipe.mc_conf.copy()
 
-    def affinity(self, position_list: t.Optional[str] = None):
+    def affinity(self, position_list: t.Optional[str] = None) -> pd.DataFrame:
         if not self.ran_pipes:
             self.run()
         active = list(map(str, self.active_pos))
