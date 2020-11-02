@@ -4,6 +4,8 @@ from glob import glob
 from itertools import chain, filterfalse
 from os import remove
 from pathlib import Path
+import logging
+from random import randint
 
 import pandas as pd
 from multiprocess.pool import Pool
@@ -105,6 +107,8 @@ class Pipeline:
         self.results: t.Optional[PipelineOutput] = None
         self.ran_setup: bool = False
         self.default_results_dump_name: str = 'RESULTS.tsv'
+        self.id = id(self)
+        logging.info(f'Pipeline {self.id}: initialized')
 
     def copy(self):
         return deepcopy(self)
@@ -175,6 +179,7 @@ class Pipeline:
 
         # flip the flag on
         self.ran_setup = True
+        logging.info(f'Pipeline {self.id}: ran setup')
 
     def run(self, dump_results: bool = True, dump_name: t.Optional[str] = None,
             parallel: bool = True) -> PipelineOutput:
@@ -195,6 +200,7 @@ class Pipeline:
         self.mc_runner.run()
         if self.base_post_conf or self.post_conf:
             self.post_runner.run()
+        logging.info(f'Pipeline {self.id}: finished Runner job')
 
         # Infer the max number of walkers
         n_walkers = [1, self.mc_conf.get_field_value('Replica_Number'),
@@ -224,6 +230,7 @@ class Pipeline:
         dfs = pd.concat(dfs)
 
         # Return the results
+        logging.info(f'Pipeline {self.id}: aggregated results')
         return PipelineOutput(dfs, summaries)
 
     def _agg_walker(
@@ -301,6 +308,7 @@ class Pipeline:
             ext_valid = any(n in p.split('.')[-1] for n in leave_ext)
             if not (in_leave or ext_valid):
                 remove(p)
+        logging.info(f'Pipeline {self.id}: cleaned up')
 
 
 if __name__ == '__main__':

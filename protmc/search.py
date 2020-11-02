@@ -12,6 +12,7 @@ from protmc import config
 from protmc import utils as u
 from protmc.affinity import affinity
 from protmc.pipeline import Pipeline, PipelineOutput, Summary
+import logging
 
 _WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
 
@@ -101,10 +102,13 @@ class AffinitySearch:
         self.workers: t.Optional[t.List[AffinityWorker]] = None
         self.results: t.Optional[pd.DataFrame] = None
         self.affinities: t.Optional[pd.DataFrame] = None
+        self.id = id(self)
+        logging.info(f'AffinitySearch {self.id}: initialized')
 
     def setup_workers(self):
         self.workers = [self._setup_worker(active_subset=s) for s in self.positions]
         self.ran_setup = True
+        logging.info(f'AffinitySearch {self.id}: ran setup for workers')
 
     def run_workers(self, num_proc: int = 1, cleanup: bool = False,
                     cleanup_kwargs: t.Optional[t.Dict] = None) -> pd.DataFrame:
@@ -122,6 +126,7 @@ class AffinitySearch:
         for res, d in zip(results, dirs):
             res['run_dir'] = d
         self.results = pd.concat(results)
+        logging.info(f'AffinitySearch {self.id}: finished running workers')
         return self.results
 
     def _setup_worker(self, active_subset: t.Union[t.List[int], int]):
@@ -179,6 +184,7 @@ class AffinitySearch:
         self.affinities = pd.concat([wrap_results(w, r) for w, r in zip(self.workers, results)])
         if dump:
             self.affinities.to_csv(f'{self.base_dir}/{dump_name}', sep='\t', index=False)
+        logging.info(f'AffinitySearch {self.id}: calculated worker affinities')
         return self.affinities
 
     def analyze_affinities(self, energy_threshold, num_threshold):
@@ -215,6 +221,8 @@ class AffinityWorker:
         self.ran_setup, self.ran_pipes = False, False
         self.temperature: t.Optional[float] = None
         self.aff: t.Optional[pd.DataFrame] = None
+        self.id = id(self)
+        logging.info(f'AffinityWorker {self.id}: initialized')
 
     def setup(self) -> None:
         def create_pipe(cfg, base_dir, exp_dir, energy_dir):
@@ -242,6 +250,7 @@ class AffinityWorker:
         self._copy_configs()
 
         self.ran_setup = True
+        logging.info(f'AffinityWorker {self.id}: completed setting up Pipelines')
 
     def run(self, parallel: bool = True, cleanup: bool = False,
             cleanup_kwargs: t.Optional[t.Dict] = None) -> pd.DataFrame:
@@ -261,20 +270,24 @@ class AffinityWorker:
         if not self.ran_setup:
             self.setup()
         if parallel:
+            logging.info(f'AffinityWorker {self.id}: running parallel ADAPTs')
             with Pool(2) as adapt_workers:
                 self.apo_adapt_results, self.holo_adapt_results = adapt_workers.map(
                     lambda p: p.run(parallel=False), [self.apo_adapt_pipe, self.holo_adapt_pipe])
             self._transfer_biases()
+            logging.info(f'AffinityWorker {self.id}: running parallel MCs')
             with Pool(2) as mc_workers:
                 self.apo_mc_results, self.holo_mc_results = mc_workers.map(
                     lambda p: p.run(parallel=False), [self.apo_mc_pipe, self.holo_mc_pipe])
         else:
+            logging.info(f'AffinityWorker {self.id}: running sequential ADAPTs')
             self.apo_adapt_results, self.holo_adapt_results = map(
                 lambda p: p.run(parallel=False), [self.apo_adapt_pipe, self.holo_adapt_pipe])
             self._transfer_biases()
+            logging.info(f'AffinityWorker {self.id}: running sequential MCs')
             self.apo_mc_results, self.holo_mc_results = map(
                 lambda p: p.run(parallel=False), [self.apo_mc_pipe, self.holo_mc_pipe])
-        self.ran_pipes = True
+        logging.info(f'AffinityWorker {self.id}: finished running Pipelines')
 
         # aggregate summary DataFrames
         summaries = [self.apo_adapt_results.summary, self.apo_mc_results.summary,
@@ -288,6 +301,7 @@ class AffinityWorker:
             for pipe in [self.apo_adapt_pipe, self.apo_mc_pipe, self.holo_adapt_pipe, self.holo_mc_pipe]:
                 pipe.cleanup(**kw)
 
+        self.ran_pipes = True
         return self.run_summaries
 
     def _get_temperature(self):
@@ -370,6 +384,7 @@ class AffinityWorker:
             temperature=self.temperature,
             threshold=self.count_threshold,
             positions=active)
+        logging.info(f'AffinityWorker {self.id}: finished calculating affinity')
         return self.aff
 
 
