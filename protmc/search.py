@@ -11,11 +11,10 @@ from tqdm import tqdm
 from protmc import config
 from protmc import utils as u
 from protmc.affinity import affinity
-from protmc.pipeline import Pipeline, Summary
+from protmc.pipeline import Pipeline, PipelineOutput, Summary
 
 _WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
-WorkerSummary = t.NamedTuple(
-    'WorkerSummary', [('apo_adapt', Summary), ('apo_mc', Summary), ('holo_adapt', Summary), ('holo_mc', Summary)])
+
 # TODO: add docs
 AffinityResults = t.NamedTuple('AffinityResults', [('run_dir', str), ('affinity', float)])
 
@@ -84,6 +83,8 @@ class AffinitySearch:
             apo_base_setup: _WorkerSetup, holo_base_setup: _WorkerSetup, base_post_cfg: config.ProtMCconfig,
             exe_path: str, base_dir: str, mut_space_n_types: int = 18, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC'):
+        if len(active) != len(ref_seq):
+            raise ValueError('Length of the reference sequence has to match the number of active positions')
         self.apo_base_setup, self.holo_base_setup = apo_base_setup, holo_base_setup
         self.base_post_cfg = base_post_cfg
         self.exe_path = exe_path
@@ -94,28 +95,33 @@ class AffinitySearch:
         self.positions = positions
         if not isinstance(positions, t.Tuple):
             self.positions = tuple(self.positions)
-        if len(active) != len(ref_seq):
-            raise ValueError('Length of the reference sequence has to match the number of active positions')
         self.active = active
         self.ref_seq = ref_seq
         self.ran_setup, self.ran_workers = False, False
         self.workers: t.Optional[t.List[AffinityWorker]] = None
-        self.results: t.Optional[t.List[WorkerSummary]] = None
+        self.results: t.Optional[pd.DataFrame] = None
         self.affinities: t.Optional[pd.DataFrame] = None
 
     def setup_workers(self):
         self.workers = [self._setup_worker(active_subset=s) for s in self.positions]
         self.ran_setup = True
 
-    def run_workers(self, num_proc: int = 1):
+    def run_workers(self, num_proc: int = 1, cleanup: bool = False,
+                    cleanup_kwargs: t.Optional[t.Dict] = None) -> pd.DataFrame:
         # TODO: try to maximize num_proc by default
         if not self.ran_setup:
             self.setup_workers()
         if num_proc > 1:
             with Pool(num_proc) as workers:
-                self.results = workers.map(lambda w: w.run(parallel=False), self.workers)
+                results = workers.map(
+                    lambda w: w.run(parallel=False, cleanup=cleanup, cleanup_kwargs=cleanup_kwargs),
+                    self.workers)
         else:
-            self.results = [w.run(parallel=False) for w in self.workers]
+            results = [w.run(parallel=False) for w in self.workers]
+        dirs = [w.run_dir for w in self.workers]
+        for res, d in zip(results, dirs):
+            res['run_dir'] = d
+        self.results = pd.concat(results)
         return self.results
 
     def _setup_worker(self, active_subset: t.Union[t.List[int], int]):
@@ -135,6 +141,7 @@ class AffinitySearch:
         for cfg in [apo_adapt_cfg, apo_mc_cfg, holo_adapt_cfg, holo_mc_cfg]:
             cfg['MC_PARAMS']['Space_Constraints'] = constraints
         exp_dir_name = "-".join(map(str, active_subset)) if isinstance(active_subset, t.Iterable) else active_subset
+
         # setup and return worker
         worker = AffinityWorker(
             apo_setup=(apo_adapt_cfg, apo_mc_cfg, apo_matrix),
@@ -150,17 +157,19 @@ class AffinitySearch:
     def workers_affinities(
             self, dump: bool = True, dump_name: str = 'AFFINITY.tsv',
             num_proc: int = 1, verbose: bool = False) -> pd.DataFrame:
+
         def try_results(worker: AffinityWorker) -> t.Optional[pd.DataFrame]:
             try:
                 return worker.affinity()
             except KeyError:
                 return None
 
-        def wrap_results(worker: AffinityWorker, results: t.Optional[pd.DataFrame]):
-            if results is None:
+        def wrap_results(worker: AffinityWorker, res: t.Optional[pd.DataFrame]):
+            if res is None:
                 return pd.DataFrame({'run_dir': [worker.run_dir], 'seq': [None], 'affinity': [None]})
-            results['pos'] = worker.run_dir.split('/')[-1]
-            return results
+            res['pos'] = worker.run_dir.split('/')[-1]
+            return res
+
         workers = tqdm(self.workers) if verbose else self.workers
         if num_proc > 1:
             with Pool(num_proc) as pool:
@@ -194,13 +203,18 @@ class AffinityWorker:
         self.run_dir = run_dir
         self.count_threshold = count_threshold
         self.adapt_dir_name, self.mc_dir_name = adapt_dir_name, mc_dir_name
-        self.apo_adapt_pipe, self.holo_adapt_pipe = None, None
-        self.apo_mc_pipe, self.holo_mc_pipe = None, None
-        self.apo_adapt_summary, self.holo_adapt_summary = None, None
-        self.apo_mc_summary, self.holo_mc_summary = None, None
+        self.apo_adapt_pipe: t.Optional[Pipeline] = None
+        self.holo_adapt_pipe: t.Optional[Pipeline] = None
+        self.apo_mc_pipe: t.Optional[Pipeline] = None
+        self.holo_mc_pipe: t.Optional[Pipeline] = None
+        self.apo_adapt_results: t.Optional[PipelineOutput] = None
+        self.holo_adapt_results: t.Optional[PipelineOutput] = None
+        self.apo_mc_results: t.Optional[PipelineOutput] = None
+        self.holo_mc_results: t.Optional[PipelineOutput] = None
+        self.run_summaries: t.Optional[pd.DataFrame] = None
         self.ran_setup, self.ran_pipes = False, False
-        self.temperature = None
-        self.aff = None
+        self.temperature: t.Optional[float] = None
+        self.aff: t.Optional[pd.DataFrame] = None
 
     def setup(self) -> None:
         def create_pipe(cfg, base_dir, exp_dir, energy_dir):
@@ -229,36 +243,62 @@ class AffinityWorker:
 
         self.ran_setup = True
 
-    def run(self, parallel: bool = True) -> WorkerSummary:
+    def run(self, parallel: bool = True, cleanup: bool = False,
+            cleanup_kwargs: t.Optional[t.Dict] = None) -> pd.DataFrame:
+        """
+        Run AffinityWorker.
+        :param parallel: if True will ADAPTs and MCs in parallel (thus, 2 processes).
+        :param cleanup: if True will call the `cleanup` method for each of the four pipelines
+        :param cleanup_kwargs: pass these kwargs to the `cleanup` method if `cleanup==True`
+        :return: a DataFrame with 4 rows (Summary's returned by the Pipeline's).
+        """
+
+        def wrap_summary(summary: pd.DataFrame, pipeline: str) -> pd.DataFrame:
+            summary = summary.copy()
+            summary['pipeline'] = pipeline
+            return summary
+
         if not self.ran_setup:
             self.setup()
         if parallel:
-            # TODO: CAREFUL! -- results and summary are not stored internally in any of the pipes
             with Pool(2) as adapt_workers:
-                self.apo_adapt_summary, self.apo_mc_summary = adapt_workers.map(
-                    lambda p: p.run(), [self.apo_adapt_pipe, self.holo_adapt_pipe])
+                self.apo_adapt_results, self.holo_adapt_results = adapt_workers.map(
+                    lambda p: p.run(parallel=False), [self.apo_adapt_pipe, self.holo_adapt_pipe])
             self._transfer_biases()
             with Pool(2) as mc_workers:
-                self.apo_mc_summary, self.holo_mc_summary = mc_workers.map(
-                    lambda p: p.run(), [self.apo_mc_pipe, self.holo_mc_pipe])
+                self.apo_mc_results, self.holo_mc_results = mc_workers.map(
+                    lambda p: p.run(parallel=False), [self.apo_mc_pipe, self.holo_mc_pipe])
         else:
-            self.apo_adapt_summary, self.apo_mc_summary = map(
-                lambda p: p.run(), [self.apo_adapt_pipe, self.holo_adapt_pipe])
+            self.apo_adapt_results, self.holo_adapt_results = map(
+                lambda p: p.run(parallel=False), [self.apo_adapt_pipe, self.holo_adapt_pipe])
             self._transfer_biases()
-            self.apo_mc_summary, self.holo_mc_summary = map(
-                lambda p: p.run(), [self.apo_mc_pipe, self.holo_mc_pipe])
+            self.apo_mc_results, self.holo_mc_results = map(
+                lambda p: p.run(parallel=False), [self.apo_mc_pipe, self.holo_mc_pipe])
         self.ran_pipes = True
-        # TODO: maybe return DataFrame or provide an option to use df
-        return WorkerSummary(
-            apo_adapt=self.apo_adapt_summary, apo_mc=self.apo_mc_summary,
-            holo_adapt=self.holo_mc_summary, holo_mc=self.holo_mc_summary)
+
+        # aggregate summary DataFrames
+        summaries = [self.apo_adapt_results.summary, self.apo_mc_results.summary,
+                     self.holo_adapt_results.summary, self.holo_mc_results.summary]
+        pipe_names = ['apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc']
+        self.run_summaries = pd.concat(list(starmap(wrap_summary, zip(summaries, pipe_names))))
+
+        # optionally cleanup each pipeline
+        if cleanup:
+            kw = {} if cleanup_kwargs is None else cleanup_kwargs
+            for pipe in [self.apo_adapt_pipe, self.apo_mc_pipe, self.holo_adapt_pipe, self.holo_mc_pipe]:
+                pipe.cleanup(**kw)
+
+        return self.run_summaries
 
     def _get_temperature(self):
         # Run only after pipes has been setup
         pipes = [self.apo_adapt_pipe, self.apo_mc_pipe, self.holo_adapt_pipe, self.holo_mc_pipe]
-        temps = set(p.mc_conf.get_field_value('Temperature') for p in pipes)
+        temps = (p.mc_conf.get_field_value('Temperature') for p in pipes)
+        temps = (temp[0] if isinstance(temp, t.List) else temp for temp in temps)
+        temps = set(map(float, temps))
         if len(temps) != 1:
-            raise ValueError(f'Every pipe should have the same `Temperature` parameter. Got {temps}')
+            raise ValueError(f'Every pipe should have the same `Temperature` for the first walker parameter. '
+                             f'Got {temps} instead.')
         return float(temps.pop())
 
     def _transfer_biases(self):
