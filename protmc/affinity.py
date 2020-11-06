@@ -8,71 +8,9 @@ from math import log
 import click
 import pandas as pd
 
-from protmc.utils import AminoAcidDict
-
-Population_element = t.NamedTuple(
-    'Population_element', [('seq', str), ('count', int)])
-AA_pair = t.NamedTuple(
-    'AA_pair', [('pos_i', str), ('pos_j', str), ('aa_i', str), ('aa_j', str)])
-Pair_bias = t.NamedTuple(
-    'Pair_bias', [('aa_pair', AA_pair), ('bias', float)])
-AffinityResult = t.NamedTuple('AffinityResults', [('seq', str), ('affinity', float)])
+from protmc.base import AminoAcidDict, Pair_bias, AA_pair
 
 
-def count_sequences(population: str, count_threshold: int) -> t.Dict[str, float]:
-    """
-    Filters sequences in the `population` having >= `count_threshold` counts.
-    Among the filtered sequences, calculates a total number of counts `total`.
-    Returns a dict mapping sequences to a fraction (`count / total`) of counts among the filtered sequences.
-    :param population: Path to a proteus.dat file (ensure validity externally).
-    :param count_threshold: Counting threshold.
-    """
-
-    def parse_line(line: str) -> Population_element:
-        seq, count = line.split('.')[3].split()[1:3]
-        return Population_element(seq, int(count))
-
-    with open(population) as f:
-        pop_elements = list(filter(
-            lambda el: el.count >= count_threshold,
-            map(parse_line, f)))
-
-    total = sum(el.count for el in pop_elements)
-    return {el.seq: el.count / total for el in pop_elements}
-
-
-def count_sequences_df(population: pd.DataFrame, count_threshold: int) -> t.Mapping[str, float]:
-    """
-    Same as count_sequences in case the population is a DataFrame SUMMARY produced by the Pipeline object
-    :param population: SUMMARY.tsv dataframe
-    :param count_threshold: counting threshold
-    :return:
-    """
-    df = population.copy()
-    df = df[df['total_count'] > count_threshold]
-    df['frequency'] = df['total_count'] / df['total_count'].sum()
-    return pd.Series(df['frequency'].values, index=df['seq']).to_dict()
-
-
-def parse_bias(bias_in: str) -> t.Dict[AA_pair, float]:
-    """
-    Parses the bias file into a dict mapping `(pos_i, pos_j, aa_i, aa_j)`
-    to a bias accumulated during the adaptive landscape flattening simulation.
-    :param bias_in: path to a bias.dat file (validated externally)
-    :return:
-    """
-
-    def parse_line(line: str) -> t.Tuple[Pair_bias, Pair_bias]:
-        line_split = line.rstrip().split()
-        pos_i, aa_i, pos_j, aa_j, bias = line_split
-        return (
-            Pair_bias(AA_pair(pos_i, pos_j, aa_i, aa_j), float(bias)),
-            Pair_bias(AA_pair(pos_j, pos_i, aa_j, aa_i), float(bias) if pos_i != pos_j else 0.0))
-
-    with open(bias_in) as f:
-        lines = chain.from_iterable(map(parse_line, filter(lambda x: not (x.startswith('#') or x == '\n'), f)))
-        groups = groupby(sorted(lines, key=lambda el: el.aa_pair), lambda el: el.aa_pair)
-        return {g: sum(x.bias for x in gg) for g, gg in groups}
 
 
 def compute_bias_energy(
