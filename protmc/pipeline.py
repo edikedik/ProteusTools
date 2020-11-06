@@ -1,11 +1,11 @@
+import logging
 import typing as t
 from copy import deepcopy
 from glob import glob
+from io import StringIO
 from itertools import chain, filterfalse
 from os import remove
 from pathlib import Path
-import logging
-from random import randint
 
 import pandas as pd
 from multiprocess.pool import Pool
@@ -13,7 +13,7 @@ from multiprocess.pool import Pool
 from protmc import config
 from protmc.post import analyze_seq_no_rich, compose_summary, Summary
 from protmc.runner import Runner
-from protmc.utils import get_bias_state, infer_mut_space
+from protmc.utils import get_bias_state, bias_to_df, infer_mut_space, dump_bias_df
 
 PipelineOutput = t.NamedTuple('PipelineOutput', [('results', pd.DataFrame), ('summary', Summary)])
 
@@ -105,6 +105,9 @@ class Pipeline:
         self.mc_runner: t.Optional[Runner] = None
         self.post_runner: t.Optional[Runner] = None
         self.results: t.Optional[PipelineOutput] = None
+        self.last_bias: t.Optional[pd.DataFrame] = None
+        self.last_bias_step: t.Optional[int] = None
+        self.last_bias_default_name: str = 'ADAPT.last.dat'
         self.ran_setup: bool = False
         self.default_results_dump_name: str = 'RESULTS.tsv'
         self.id = id(self)
@@ -146,6 +149,70 @@ class Pipeline:
             n_types, len(self.active_pos),
             [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
 
+    def _store_bias(self) -> None:
+        bias_path = self.mc_conf.get_field_value('Adapt_Output_File')
+        if bias_path is None:
+            return None
+        output_period = int(self.mc_conf.get_field_value('Adapt_Output_Period'))
+        n_steps = int(self.mc_conf.get_field_value('Trajectory_Length'))
+        last_step = self.last_bias_step = (n_steps // output_period) * output_period
+        last_bias = bias_to_df(StringIO(get_bias_state(bias_path, last_step)))[['var', 'bias']]
+        if self.last_bias is None:
+            self.last_bias = last_bias.sort_values('var')
+        else:
+            self.last_bias = pd.concat(
+                [self.last_bias, last_bias]
+            ).groupby(
+                'var', as_index=False
+            ).agg(
+                {'bias': 'sum'}
+            ).sort_values('var')
+
+    def _dump_bias(self, path: str):
+        if self.last_bias is None:
+            raise ValueError('No last bias to dump')
+        dump_bias_df(self.last_bias, path, self.last_bias_step)
+
+    def _agg_walker(
+            self, active, dump_results: bool = True, dump_name: t.Optional[str] = None,
+            n_walker: t.Optional[int] = None) -> pd.DataFrame:
+        """
+        The function exists to aggregate a single walker. It basically handles the suffixes [_0, _1, ...]
+            protMC assigns depending on the number of trajectories (or replicas).
+        :param active: active positions
+        :param dump_results: dump results or not
+        :param dump_name: file name to dump results
+        :param n_walker: walker number -- can be either empty string or "0", "1" and so on.
+        :return: DataFrame of aggregation results
+        """
+        # aggregate the results
+        n_walker = '' if n_walker is None else f'_{n_walker}'
+        df = analyze_seq_no_rich(
+            seq_path=self.mc_conf.get_field_value('Seq_Output_File') + n_walker,
+            matrix_bb=f'{self.energy_dir}/matrix.bb', active=active,
+            steps=int(self.mc_conf.get_field_value('Trajectory_Length')))
+        df['exp'] = self.exp_dir_name
+        df['walker'] = n_walker
+
+        # optionally dump the results into the experiment directory
+        if dump_results:
+            df.to_csv(f'{self.base_dir}/{self.exp_dir_name}/{dump_name}' + n_walker, sep='\t', index=False)
+
+        return df
+
+    def _combine_results(self, new: t.Iterable[pd.DataFrame]):
+        def recombine(comb: pd.DataFrame) -> pd.DataFrame:
+            df = comb.groupby('seq').agg({'total_count': 'sum', 'min_energy': 'min', 'max_energy': 'max'})
+            df['seq_prob'] = df['total_count'] / df['total_count'].sum()
+            if 'exp' in df.columns:
+                df['exp'] = ';'.join(set(df['exp']))
+            if 'walker' in df.columns:
+                walkers = list(filterfalse(lambda x: x is None, set(df['walker'])))
+                df['walker'] = None if not walkers else ';'.join(map(str, walkers))
+            return df[['seq', 'total_count', 'min_energy', 'max_energy', 'exp', 'walker']]
+
+        return [recombine(pd.concat([r_old.results, r_new])) for r_old, r_new in zip(self.results, new)]
+
     def setup(self, mc_config_changes: t.Optional[t.Iterable[t.Tuple[str, t.Any]]] = None, continuation: bool = False):
         """
         Prepare for the run: handle config's IO, implement changes if necessary,
@@ -182,12 +249,15 @@ class Pipeline:
         logging.info(f'Pipeline {self.id}: ran setup')
 
     def run(self, dump_results: bool = True, dump_name: t.Optional[str] = None,
+            dump_bias: bool = True, dump_bias_name: t.Optional[str] = None,
             parallel: bool = True) -> PipelineOutput:
         """
         Run the pipeline.
         If ran prior to `setup` method, the latter will be called first (with the default arguments).
         :param dump_results: flag whether to dump the results DataFrame
-        :param dump_name:
+        :param dump_name: the file name of the results TSV file
+        :param dump_bias: whether to dump the last state of the bias (works in the ADAPT mode)
+        :param dump_bias_name: dump the last bias in the experiment directory under this name
         :param parallel: if number of walkers exceeds 1, aggregate the results in parallel
         :return:
         """
@@ -195,6 +265,8 @@ class Pipeline:
             self.setup()
         if not dump_name:
             dump_name = self.default_results_dump_name
+        if not dump_bias_name:
+            dump_bias_name = self.last_bias_default_name
 
         # Run the calculations
         self.mc_runner.run()
@@ -229,39 +301,17 @@ class Pipeline:
         summaries['walker'] = list(range(n_walkers))
         dfs = pd.concat(dfs)
 
+        # Store bias
+        self._store_bias()
+        if dump_bias:
+            self._dump_bias(dump_bias_name)
+
         # Return the results
         logging.info(f'Pipeline {self.id}: aggregated results')
         return PipelineOutput(dfs, summaries)
 
-    def _agg_walker(
-            self, active, dump_results: bool = True, dump_name: t.Optional[str] = None,
-            n_walker: t.Optional[int] = None) -> pd.DataFrame:
-        """
-        The function exists to aggregate a single walker. It basically handles the suffixes [_0, _1, ...]
-            protMC assigns depending on the number of trajectories (or replicas).
-        :param active: active positions
-        :param dump_results: dump results or not
-        :param dump_name: file name to dump results
-        :param n_walker: walker number -- can be either empty string or "0", "1" and so on.
-        :return: DataFrame of aggregation results
-        """
-        # aggregate the results
-        n_walker = '' if n_walker is None else f'_{n_walker}'
-        df = analyze_seq_no_rich(
-            seq_path=self.mc_conf.get_field_value('Seq_Output_File') + n_walker,
-            matrix_bb=f'{self.energy_dir}/matrix.bb', active=active,
-            steps=int(self.mc_conf.get_field_value('Trajectory_Length')))
-        df['exp'] = self.exp_dir_name
-        df['walker'] = n_walker
-
-        # optionally dump the results into the experiment directory
-        if dump_results:
-            df.to_csv(f'{self.base_dir}/{self.exp_dir_name}/{dump_name}' + n_walker, sep='\t', index=False)
-
-        return df
-
     def continue_run(
-            self, new_exp_name: str, bias_step: int, n_walker: str = '',
+            self, new_exp_name: str,
             dump_results: bool = True, parallel: bool = False, dump_name: t.Optional[str] = None,
             mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None) -> Summary:
         """
@@ -270,8 +320,6 @@ class Pipeline:
         and the summary will be computed on this concatenation.
 
         :param new_exp_name: the name of the new experiment (must be different from the previous experiment name)
-        :param bias_step: the step to continue from
-        :param n_walker: the walker number to get the bias from
         (in case of continuing multi-replica or multi-trajectory run)
         :param parallel: call `run` method in parallel mode
         :param dump_results: dump results of the current (!) run in the experiment directory
@@ -280,16 +328,13 @@ class Pipeline:
         :return: Summary namedtuple with basic computed over the results
         """
         self.exp_dir_name = new_exp_name
-        bias_path = self.mc_conf.get_field_value('Adapt_Output_File') + n_walker
-        bias = get_bias_state(bias_path, bias_step)
-        if not bias:
-            raise ValueError(f'Could not find the step {bias_step} in the {bias_path}')
         mode = self.mc_conf.mode.field_values[0]
 
         Path(f'{self.base_dir}/{self.exp_dir_name}').mkdir(exist_ok=True, parents=True)
         bias_path = f'{self.base_dir}/{self.exp_dir_name}/{mode}.inp.dat'
-        with open(bias_path, 'w') as f:
-            print(bias, file=f)
+        if not self.last_bias:
+            self._store_bias()
+        self._dump_bias(bias_path)
 
         self.mc_conf['MC_IO']['Bias_Input_File'] = config.ProtMCfield(
             field_name='Bias_Input_File',

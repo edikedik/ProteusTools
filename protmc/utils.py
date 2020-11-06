@@ -1,8 +1,9 @@
 import operator as op
 import subprocess as sp
 import typing as t
+from io import StringIO
 from functools import reduce
-from itertools import dropwhile, takewhile, combinations, groupby, chain, filterfalse
+from itertools import dropwhile, takewhile, combinations, groupby, chain, filterfalse, starmap
 from pathlib import Path
 
 import biotite.structure as bst
@@ -113,15 +114,29 @@ def tail(filename: str, n: int) -> str:
     return res.stdout
 
 
-def bias_to_df(bias_file: str) -> pd.DataFrame:
+def bias_to_df(bias_file: t.Union[str, StringIO]) -> pd.DataFrame:
     df = pd.read_csv(
         bias_file,
         sep=r'\s+', skiprows=1,
         names=['pos1', 'aa1', 'pos2', 'aa2', 'bias'],
         dtype={'pos1': str, 'pos2': str},
         comment='#').dropna()
-    df['Var'] = ['-'.join([x.pos1, x.aa1, x.pos2, x.aa2]) for x in df.itertuples()]
+    df['var'] = ['-'.join([x.pos1, x.aa1, x.pos2, x.aa2]) for x in df.itertuples()]
     return df
+
+
+def dump_bias_df(df: pd.DataFrame, path: str, step: t.Optional[int] = None):
+    with open(path, 'w') as f:
+        if step is not None:
+            print(f'# STEP {step}', file=f)
+        for _, v, b in df[['var', 'bias']].itertuples():
+            print(*v.split('-'), b, file=f)
+    return
+
+
+def sum_bias(bias1, step1, bias2, step2):
+    b1, b2 = map(bias_to_df, map(StringIO, starmap(get_bias_state, [(bias1, step1), (bias2, step2)])))
+    return pd.concat([b1, b2]).groupby('var', as_index=False).agg({'bias': 'sum'})
 
 
 def plot_bias_timeline(bias_file: str):
