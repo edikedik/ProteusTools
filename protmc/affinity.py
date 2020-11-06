@@ -2,15 +2,14 @@ import operator as op
 import sys
 import typing as t
 from functools import partial
-from itertools import chain, groupby, product
+from itertools import product
 from math import log
 
 import click
 import pandas as pd
 
-from protmc.base import AminoAcidDict, Pair_bias, AA_pair
-
-
+from protmc.base import AminoAcidDict, AA_pair, AffinityResult
+from protmc.parsers import parse_population, parse_population_df, parse_bias
 
 
 def compute_bias_energy(
@@ -78,10 +77,10 @@ def affinity(
     :return:
     """
     # Count frequencies within the `bound` and `unbound` populations, respectively
-    freq_b = (count_sequences(pop_bound, threshold)
-              if isinstance(pop_bound, str) else count_sequences_df(pop_bound, threshold))
-    freq_u = (count_sequences(pop_unbound, threshold)
-              if isinstance(pop_unbound, str) else count_sequences_df(pop_unbound, threshold))
+    freq_b = (parse_population(pop_bound, threshold)
+              if isinstance(pop_bound, str) else parse_population_df(pop_bound, threshold))
+    freq_u = (parse_population(pop_unbound, threshold)
+              if isinstance(pop_unbound, str) else parse_population_df(pop_unbound, threshold))
     # print("pop_bound\n", sorted(freq_b.items()), "\n", "pop_unbound\n", sorted(freq_u.items()))
     # Identify sequences common to both populations
     common_ub = set(freq_b) & set(freq_u)

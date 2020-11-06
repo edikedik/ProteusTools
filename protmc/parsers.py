@@ -5,10 +5,32 @@ from itertools import dropwhile, takewhile, groupby, chain
 
 import pandas as pd
 
-from protmc.base import Pair_bias, AA_pair
+from protmc.base import Pair_bias, AA_pair, Population_element
 
 
-def parse_population(population: pd.DataFrame, count_threshold: int) -> t.Mapping[str, float]:
+def parse_population(population: str, count_threshold: int) -> t.Dict[str, float]:
+    """
+    Filters sequences in the `population` having >= `count_threshold` counts.
+    Among the filtered sequences, calculates a total number of counts `total`.
+    Returns a dict mapping sequences to a fraction (`count / total`) of counts among the filtered sequences.
+    :param population: Path to a proteus.dat file (ensure validity externally).
+    :param count_threshold: Counting threshold.
+    """
+
+    def parse_line(line: str) -> Population_element:
+        seq, count = line.split('.')[3].split()[1:3]
+        return Population_element(seq, int(count))
+
+    with open(population) as f:
+        pop_elements = list(filter(
+            lambda el: el.count >= count_threshold,
+            map(parse_line, f)))
+
+    total = sum(el.count for el in pop_elements)
+    return {el.seq: el.count / total for el in pop_elements}
+
+
+def parse_population_df(population: pd.DataFrame, count_threshold: int) -> t.Mapping[str, float]:
     """
     Same as count_sequences in case the population is a DataFrame SUMMARY produced by the Pipeline object
     :param population: SUMMARY.tsv dataframe
