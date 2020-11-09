@@ -8,6 +8,12 @@ import pandas as pd
 from protmc.base import Pair_bias, AA_pair, Population_element
 
 
+def parse_ref_energies(path: str) -> t.Dict[str, float]:
+    with open(path) as f:
+        lines = (line.rstrip().split() for line in f if line != '\n')
+        return {line[0]: float(line[1]) for line in lines}
+
+
 def parse_population(population: str, count_threshold: int) -> t.Dict[str, float]:
     """
     Filters sequences in the `population` having >= `count_threshold` counts.
@@ -32,7 +38,7 @@ def parse_population(population: str, count_threshold: int) -> t.Dict[str, float
 
 def parse_population_df(population: pd.DataFrame, count_threshold: int) -> t.Mapping[str, float]:
     """
-    Same as count_sequences in case the population is a DataFrame SUMMARY produced by the Pipeline object
+    Same as parse_population in case the population is a DataFrame SUMMARY produced by the Pipeline object
     :param population: SUMMARY.tsv dataframe
     :param count_threshold: counting threshold
     :return:
@@ -65,6 +71,14 @@ def parse_bias(bias_in: str) -> t.Dict[AA_pair, float]:
 
 
 def bias_to_df(bias_file: t.Union[str, StringIO]) -> pd.DataFrame:
+    """
+    Read bias file and convert it into a pandas DataFrame.
+    Note: the information about step is lost.
+    :param bias_file: Anything pandas can read from.
+    :return: The returned DataFrame has 2 columns: `var` and `bias`.
+    The first columns is a dash-separated pair {pos1}-{aa1}-{pos2}-{aa2},
+    while the `bias` is the bias (float) value for this pair.
+    """
     df = pd.read_csv(
         bias_file,
         sep=r'\s+', skiprows=1,

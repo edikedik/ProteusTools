@@ -11,9 +11,10 @@ import pandas as pd
 from multiprocess.pool import Pool
 
 from protmc import config
+from protmc.parsers import dump_bias_df
 from protmc.post import analyze_seq_no_rich, compose_summary, Summary
 from protmc.runner import Runner
-from protmc.utils import get_bias_state, bias_to_df, infer_mut_space, dump_bias_df
+from protmc.utils import get_bias_state, bias_to_df, infer_mut_space
 
 PipelineOutput = t.NamedTuple('PipelineOutput', [('results', pd.DataFrame), ('summary', Summary)])
 

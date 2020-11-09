@@ -3,6 +3,7 @@ import typing as t
 from functools import reduce
 from io import StringIO
 from itertools import combinations, groupby, chain, filterfalse, starmap
+from itertools import product
 from pathlib import Path
 
 import biotite.structure as bst
@@ -10,7 +11,7 @@ import biotite.structure.io as io
 import numpy as np
 import pandas as pd
 
-from protmc.base import AminoAcidDict
+from protmc.base import AminoAcidDict, AA_pair
 from protmc.parsers import bias_to_df, get_bias_state
 
 T = t.TypeVar('T')
@@ -35,13 +36,27 @@ def count_sequences(seqs: t.Iterable[str]) -> int:
     return len(set(mapped_seqs))
 
 
+def compute_bias_energy(
+        sequence: str, positions: t.Iterable[int],
+        bias: t.Dict[AA_pair, float], aa_mapping: t.Dict[str, str]) -> float:
+    """
+    Compute a bias for a given subsequence (determined by `positions`)
+    :param sequence: A protein sequence
+    :param positions: A collection of positions to subset the sequence
+    :param bias: A mapping between amino acid pairs and bias values
+    :param aa_mapping: A mapping between three-letter and one-letter amino acid codes
+    :return: a negative sum of each pair biases inside the subsequence
+    """
+    # TODO: one does not really need positions here
+    pairs = product(zip(positions, sequence), repeat=2)
+    pairs = (AA_pair(aa1[0], aa2[0], aa_mapping[aa1[1]], aa_mapping[aa2[1]]) for aa1, aa2 in pairs)
+    pairs = filter(lambda pair: pair in bias and pair.pos_j <= pair.pos_i, pairs)
+    return -sum(bias[pair] for pair in pairs)
+
+
 def sum_bias(bias1, step1, bias2, step2):
     b1, b2 = map(bias_to_df, map(StringIO, starmap(get_bias_state, [(bias1, step1), (bias2, step2)])))
     return pd.concat([b1, b2]).groupby('var', as_index=False).agg({'bias': 'sum'})
-
-
-def plot_bias_timeline(bias_file: str):
-    pass
 
 
 def interacting_pairs(structure_path: str, distance_threshold: float, positions: t.Optional[t.Iterable[int]] = None):

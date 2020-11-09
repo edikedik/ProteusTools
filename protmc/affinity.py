@@ -10,23 +10,7 @@ import pandas as pd
 
 from protmc.base import AminoAcidDict, AA_pair, AffinityResult
 from protmc.parsers import parse_population, parse_population_df, parse_bias
-
-
-def compute_bias_energy(
-        sequence: str, positions: t.Iterable[int],
-        bias: t.Dict[AA_pair, float], aa_mapping: t.Dict[str, str]) -> float:
-    """
-    Compute a bias for a given subsequence (determined by `positions`)
-    :param sequence: A protein sequence
-    :param positions: A collection of positions to subset the sequence
-    :param bias: A mapping between amino acid pairs and bias values
-    :param aa_mapping: A mapping between three-letter and one-letter amino acid codes
-    :return: a negative sum of each pair biases inside the subsequence
-    """
-    pairs = product(zip(positions, sequence), repeat=2)
-    pairs = (AA_pair(aa1[0], aa2[0], aa_mapping[aa1[1]], aa_mapping[aa2[1]]) for aa1, aa2 in pairs)
-    pairs = filter(lambda pair: pair in bias and pair.pos_j <= pair.pos_i, pairs)
-    return -sum(bias[pair] for pair in pairs)
+from protmc.utils import compute_bias_energy
 
 
 def energy(
