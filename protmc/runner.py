@@ -21,9 +21,16 @@ class Runner:
         self._log_path = log_path or f'{run_dir}/{self._mode}.log'
         self._run_command = f'{self._exe_path} < {self._config_path} > {self._log_path}'
 
-    def run(self):
+    def run_blocking(self):
         try:
             sp.run(self._run_command, shell=True, check=True)
         except sp.CalledProcessError as e:
             output = sp.run(self._run_command, shell=True, check=False, capture_output=True, text=True)
             raise RuntimeError(f'Failed to run protMC with an error {e} and output {output}')
+
+    def run_non_blocking(self, **kwargs):
+        return sp.Popen(self._run_command, shell=True, **kwargs)
+
+
+if __name__ == '__main__':
+    raise RuntimeError

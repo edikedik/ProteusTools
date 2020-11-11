@@ -1,4 +1,5 @@
 import logging
+import subprocess as sp
 import typing as t
 from copy import deepcopy
 from glob import glob
@@ -6,17 +7,17 @@ from io import StringIO
 from itertools import chain, filterfalse
 from os import remove
 from pathlib import Path
+from time import time
 
 import pandas as pd
 from multiprocess.pool import Pool
 
 from protmc import config
+from protmc.base import PipelineOutput
 from protmc.parsers import dump_bias_df
-from protmc.post import analyze_seq_no_rich, compose_summary, Summary
+from protmc.post import analyze_seq_no_rich, compose_summary
 from protmc.runner import Runner
 from protmc.utils import get_bias_state, bias_to_df, infer_mut_space
-
-PipelineOutput = t.NamedTuple('PipelineOutput', [('results', pd.DataFrame), ('summary', Summary)])
 
 
 def setup_exp_dir(base_dir: str, name: str) -> str:
@@ -104,6 +105,7 @@ class Pipeline:
         self.post_conf: t.Optional[config.ProtMCconfig] = None
         self.exp_dir: t.Optional[str] = None
         self.mc_runner: t.Optional[Runner] = None
+        self.mc_runner_sp: t.Optional[sp.Popen] = None
         self.post_runner: t.Optional[Runner] = None
         self.results: t.Optional[PipelineOutput] = None
         self.last_bias: t.Optional[pd.DataFrame] = None
@@ -249,84 +251,15 @@ class Pipeline:
         self.ran_setup = True
         logging.info(f'Pipeline {self.id}: ran setup')
 
-    def run(self, dump_results: bool = True, dump_name: t.Optional[str] = None,
-            dump_bias: bool = True, dump_bias_name: t.Optional[str] = None,
-            parallel: bool = True) -> PipelineOutput:
-        """
-        Run the pipeline.
-        If ran prior to `setup` method, the latter will be called first (with the default arguments).
-        :param dump_results: flag whether to dump the results DataFrame
-        :param dump_name: the file name of the results TSV file
-        :param dump_bias: whether to dump the last state of the bias (works in the ADAPT mode)
-        :param dump_bias_name: dump the last bias in the experiment directory under this name
-        :param parallel: if number of walkers exceeds 1, aggregate the results in parallel
-        :return:
-        """
-        if not self.ran_setup:
-            self.setup()
-        if not dump_name:
-            dump_name = self.default_results_dump_name
-        if not dump_bias_name:
-            dump_bias_name = self.last_bias_default_name
-
-        # Run the calculations
-        self.mc_runner.run()
-        if self.base_post_conf or self.post_conf:
-            self.post_runner.run()
-        logging.info(f'Pipeline {self.id}: finished Runner job')
-
-        # Infer the max number of walkers
-        n_walkers = [1, self.mc_conf.get_field_value('Replica_Number'),
-                     self.mc_conf.get_field_value('Trajectory_Number')]
-        n_walkers = max(map(int, filterfalse(lambda x: x is None, n_walkers)))
-
-        # aggregate the results
-        if parallel and n_walkers > 1:
-            with Pool(n_walkers) as pool:
-                results = pool.map(
-                    lambda n: self._agg_walker(self.active_pos, dump_results, dump_name, n),
-                    range(n_walkers))
-        elif not parallel and n_walkers > 1:
-            results = [self._agg_walker(self.active_pos, dump_results, dump_name, n) for n in range(n_walkers)]
-        else:
-            results = [self._agg_walker(self.active_pos, dump_results, dump_name)]
-
-        # Either add the results to existing ones or store as new
-        if self.results is not None and len(results) == len(self.results):
-            dfs = [pd.concat([r_old.results, r_new]) for r_old, r_new in zip(self.results, results)]
-        else:
-            dfs = results
-
-        # Concatenate results
-        summaries = pd.DataFrame(compose_summary(x, self.mut_space_size) for x in dfs)
-        summaries['walker'] = list(range(n_walkers))
-        dfs = pd.concat(dfs)
-
-        # Store bias
-        self._store_bias()
-        if dump_bias:
-            self._dump_bias(dump_bias_name)
-
-        # Return the results
-        logging.info(f'Pipeline {self.id}: aggregated results')
-        return PipelineOutput(dfs, summaries)
-
-    def continue_run(
+    def setup_continuation(
             self, new_exp_name: str,
-            dump_results: bool = True, parallel: bool = False, dump_name: t.Optional[str] = None,
-            mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None) -> Summary:
+            mc_config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None) -> None:
         """
-        Continue the run using previously developed bias.
-        The results of the previous and the current run will be concatenated,
-        and the summary will be computed on this concatenation.
+        Setup a new run using previously developed bias.
 
         :param new_exp_name: the name of the new experiment (must be different from the previous experiment name)
         (in case of continuing multi-replica or multi-trajectory run)
-        :param parallel: call `run` method in parallel mode
-        :param dump_results: dump results of the current (!) run in the experiment directory
-        :param dump_name: name of the dump file (passed to the `run` method)
         :param mc_config_changes: changes passed to the `run` method
-        :return: Summary namedtuple with basic computed over the results
         """
         self.exp_dir_name = new_exp_name
         mode = self.mc_conf.mode.field_values[0]
@@ -343,7 +276,94 @@ class Pipeline:
             comment='Path to a file with existing bias potential'
         )
         self.setup(mc_config_changes=mc_config_changes, continuation=True)
-        return self.run(dump_results=dump_results, dump_name=dump_name, parallel=parallel)
+
+    def run_blocking(self) -> None:
+        """
+        Run the pipeline.
+        If ran prior to `setup` method, the latter will be called first (with the default arguments).
+        """
+        if not self.ran_setup:
+            self.setup()
+
+        # Run the calculations
+        self.mc_runner.run_blocking()
+        if self.base_post_conf or self.post_conf:
+            self.post_runner.run_blocking()
+        logging.info(f'Pipeline {self.id}: finished Runner job')
+
+    def run_non_blocking(self, **kwargs) -> sp.Popen:
+        if not self.ran_setup:
+            self.setup()
+        if self.post_conf is not None:
+            raise NotImplemented('Can not use non-blocking calls with POST mode')
+        self.mc_runner_sp = self.mc_runner.run_non_blocking(**kwargs)
+        return self.mc_runner_sp
+
+    def collect_results(
+            self, dump_results: bool = True, dump_name: t.Optional[str] = None,
+            dump_bias: bool = True, dump_bias_name: t.Optional[str] = None,
+            parallel: bool = True, walker: t.Optional[int] = None,
+            return_self: bool = True) -> t.Tuple[PipelineOutput, t.Optional['Pipeline']]:
+        """
+        :param dump_results: flag whether to dump the results DataFrame
+        :param dump_name: the file name of the results TSV file
+        :param dump_bias: whether to dump the last state of the bias (works in the ADAPT mode)
+        :param dump_bias_name: dump the last bias in the experiment directory under this name
+        :param parallel: if number of walkers exceeds 1, aggregate the results in parallel
+        :param walker:
+        :param return_self:
+        """
+        logging.info(f'Pipeline {self.id}: starting to collect the results')
+        if not dump_name:
+            dump_name = self.default_results_dump_name
+        if not dump_bias_name:
+            dump_bias_name = self.last_bias_default_name
+
+        if self.mc_runner_sp is not None and self.mc_runner_sp.poll() is None:
+            logging.info(f'Pipeline {self.id}: waiting for the subprocess {self.mc_runner_sp.pid} to finish')
+            self.mc_runner_sp.communicate()
+
+        # Infer the max number of walkers
+        n_walkers = [1, self.mc_conf.get_field_value('Replica_Number'),
+                     self.mc_conf.get_field_value('Trajectory_Number')]
+        n_walkers = max(map(int, filterfalse(lambda x: x is None, n_walkers)))
+
+        # aggregate the results
+        start = time()
+        if parallel and walker is None and n_walkers > 1:
+            with Pool(n_walkers) as pool:
+                results = pool.map(
+                    lambda n: self._agg_walker(self.active_pos, dump_results, dump_name, n),
+                    range(n_walkers))
+        elif not parallel and n_walkers > 1:
+            results = [
+                self._agg_walker(self.active_pos, dump_results, dump_name, n)
+                for n in range(n_walkers) if (walker is None or n == walker)]
+        else:
+            results = [self._agg_walker(self.active_pos, dump_results, dump_name)]
+        finish = time() - start
+        logging.info(f'Pipeline {self.id}: finished aggregating the results in {finish}s')
+
+        # Either add the results to existing ones or store as new
+        if self.results is not None and len(results) == len(self.results):
+            dfs = self._combine_results(results)
+        else:
+            dfs = results
+
+        # Concatenate and store the results
+        summaries = pd.DataFrame(compose_summary(x, self.mut_space_size) for x in dfs)
+        # summaries['walker'] = list(range(n_walkers))
+        dfs = pd.concat(dfs)
+
+        logging.info(f'Pipeline {self.id}: storing the output')
+        # Store bias
+        self._store_bias()
+        if dump_bias and self.last_bias is not None:
+            self._dump_bias(dump_bias_name)
+
+        # Store and return the results
+        self.results = PipelineOutput(dfs, summaries)
+        return self.results, self if return_self else None
 
     def cleanup(self, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), leave_names: t.Tuple[str, ...] = ()):
         files = glob(f'{self.exp_dir}/*')

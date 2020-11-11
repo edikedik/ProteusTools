@@ -1,12 +1,18 @@
 import typing as t
+from collections import namedtuple
 
-Population_element = t.NamedTuple(
-    'Population_element', [('seq', str), ('count', int)])
-AA_pair = t.NamedTuple(
-    'AA_pair', [('pos_i', str), ('pos_j', str), ('aa_i', str), ('aa_j', str)])
-Pair_bias = t.NamedTuple(
-    'Pair_bias', [('aa_pair', AA_pair), ('bias', float)])
+import pandas as pd
+
+Population_element = t.NamedTuple('Population_element', [('seq', str), ('count', int)])
+AA_pair = t.NamedTuple('AA_pair', [('pos_i', str), ('pos_j', str), ('aa_i', str), ('aa_j', str)])
+PairBias = t.NamedTuple('PairBias', [('aa_pair', AA_pair), ('bias', float)])
 AffinityResult = t.NamedTuple('AffinityResults', [('seq', str), ('affinity', float)])
+AffinityResults = t.NamedTuple('AffinityResults', [('run_dir', str), ('affinity', float)])
+PipelineOutput = t.NamedTuple('PipelineOutput', [('seqs', pd.DataFrame), ('summary', pd.DataFrame)])
+ParsedEntry = t.NamedTuple('ParsedEntry', [('seq', str), ('counts', int), ('energy', float)])
+Summary = t.NamedTuple('Summary', [
+    ('num_unique', int), ('num_unique_merged', int), ('coverage', float),
+    ('seq_prob_mean', float), ('seq_prob_std', float), ('seq_prob_rss', float)])
 
 _AA_DICT = """ALA A ACT
 CYS C ACT

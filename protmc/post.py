@@ -7,12 +7,8 @@ from itertools import islice, takewhile, starmap, count, groupby
 import pandas as pd
 from tqdm import tqdm
 
+from protmc.base import Summary, ParsedEntry
 from protmc.utils import count_sequences
-
-Summary = namedtuple('summary', [
-    'num_unique', 'num_unique_merged', 'coverage',
-    'seq_prob_mean', 'seq_prob_std', 'seq_prob_rss'])
-Parsed_entry = namedtuple('parsed_entry', ['seq', 'counts', 'energy'])
 
 
 def analyze_seq(
@@ -33,14 +29,14 @@ def analyze_seq(
     def take(n, iterable):
         return list(islice(iterable, n))
 
-    def parse_entry(entry: Entry) -> Parsed_entry:
+    def parse_entry(entry: Entry) -> ParsedEntry:
         counts, energy = entry.seq_entry.split()[1:3]
         counts, energy = int(counts), float(energy)
         seq_rich = "".join(entry.rich_entry.split()[1:])
-        return Parsed_entry(seq_rich, counts, energy)
+        return ParsedEntry(seq_rich, counts, energy)
 
-    def subset_positions(entry: Parsed_entry, pos: t.List[int]) -> Parsed_entry:
-        return Parsed_entry(
+    def subset_positions(entry: ParsedEntry, pos: t.List[int]) -> ParsedEntry:
+        return ParsedEntry(
             "".join([entry.seq[i] for i in pos]), entry.counts, entry.energy)
 
     with open(rich) as r, open(seq) as s:
@@ -98,7 +94,7 @@ def analyze_seq_no_rich(
         if active:
             positions = [positions[pdb_map[str(p)]] for p in active]
         seq = "".join(rot_map[i][p] for i, p in positions)
-        return Parsed_entry(seq, int(counts), float(energy))
+        return ParsedEntry(seq, int(counts), float(energy))
 
     with open(seq_path) as f:
         f.readline()
@@ -119,6 +115,7 @@ def matrix_mappings(matrix_bb: str):
     :param matrix_bb: path to a matrix file with diagonal elements
     :return: a tuple of (`pdb_pos`->`idx_pos` and `idx_pos`->(`idx_rot`->`aa1`) mappings
     """
+
     def parse_group(group_idx: int, pdb_pos: str, lines: t.Iterator[str]):
         lines = list(lines)
         pdb2idx = (pdb_pos, group_idx)

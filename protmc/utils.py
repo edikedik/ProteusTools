@@ -47,7 +47,6 @@ def compute_bias_energy(
     :param aa_mapping: A mapping between three-letter and one-letter amino acid codes
     :return: a negative sum of each pair biases inside the subsequence
     """
-    # TODO: one does not really need positions here
     pairs = product(zip(positions, sequence), repeat=2)
     pairs = (AA_pair(aa1[0], aa2[0], aa_mapping[aa1[1]], aa_mapping[aa2[1]]) for aa1, aa2 in pairs)
     pairs = filter(lambda pair: pair in bias and pair.pos_j <= pair.pos_i, pairs)

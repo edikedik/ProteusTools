@@ -5,7 +5,7 @@ from itertools import dropwhile, takewhile, groupby, chain
 
 import pandas as pd
 
-from protmc.base import Pair_bias, AA_pair, Population_element
+from protmc.base import PairBias, AA_pair, Population_element
 
 
 def parse_ref_energies(path: str) -> t.Dict[str, float]:
@@ -57,12 +57,12 @@ def parse_bias(bias_in: str) -> t.Dict[AA_pair, float]:
     :return:
     """
 
-    def parse_line(line: str) -> t.Tuple[Pair_bias, Pair_bias]:
+    def parse_line(line: str) -> t.Tuple[PairBias, PairBias]:
         line_split = line.rstrip().split()
         pos_i, aa_i, pos_j, aa_j, bias = line_split
         return (
-            Pair_bias(AA_pair(pos_i, pos_j, aa_i, aa_j), float(bias)),
-            Pair_bias(AA_pair(pos_j, pos_i, aa_j, aa_i), float(bias) if pos_i != pos_j else 0.0))
+            PairBias(AA_pair(pos_i, pos_j, aa_i, aa_j), float(bias)),
+            PairBias(AA_pair(pos_j, pos_i, aa_j, aa_i), float(bias) if pos_i != pos_j else 0.0))
 
     with open(bias_in) as f:
         lines = chain.from_iterable(map(parse_line, filter(lambda x: not (x.startswith('#') or x == '\n'), f)))
