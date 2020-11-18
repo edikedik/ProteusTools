@@ -10,8 +10,10 @@ from tqdm import tqdm
 
 from protmc import config
 from protmc import utils as u
+from protmc.base import NoReferenceError
 from protmc.affinity import affinity
 from protmc.pipeline import Pipeline, PipelineOutput
+from protmc.stability import stability
 
 WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
 
@@ -27,9 +29,10 @@ class AffinitySearch:
     """
 
     def __init__(
-            self, positions: t.Iterable[t.Union[t.Collection[int], int]], active: t.List[int], ref_seq: str,
+            self, positions: t.Iterable[t.Union[t.Collection[int], int]], active: t.List[int],
             apo_base_setup: WorkerSetup, holo_base_setup: WorkerSetup,
-            exe_path: str, base_dir: str, mut_space_n_types: int = 18, count_threshold: int = 10,
+            exe_path: str, base_dir: str, ref_seq: t.Optional[str] = None,
+            mut_space_n_types: int = 18, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC',
             apo_dir_name: str = 'apo', holo_dir_name: str = 'holo'):
         """
@@ -86,11 +89,13 @@ class AffinitySearch:
         if not isinstance(positions, t.Tuple):
             self.positions = tuple(self.positions)
         self.active = active
-        self.ref_seq = ref_seq
+        self.ref_seq = ref_seq or self._infer_ref_seq()
         self.ran_setup, self.ran_workers = False, False
         self.workers: t.Optional[t.List[AffinityWorker]] = None
         self.summaries: t.Optional[pd.DataFrame] = None
-        self.affinities: t.Optional[pd.DataFrame] = None
+        self.affinities_: t.Optional[pd.DataFrame] = None
+        self.stabilities_: t.Optional[pd.DataFrame] = None
+        self.results: t.Optional[pd.DataFrame] = None
         self.id = id(self)
         logging.info(f'AffinitySearch {self.id}: initialized')
 
@@ -141,6 +146,117 @@ class AffinitySearch:
         logging.info(f'AffinitySearch {self.id}: finished running workers')
         return self.summaries
 
+    def affinities(
+            self, dump: bool = True, dump_name: str = 'AFFINITY.tsv',
+            num_proc: int = 1, verbose: bool = False) -> t.Optional[pd.DataFrame]:
+        """
+        Calls `calculate_affinity` method of each `AffinityWorker` and processes the results.
+        :param dump: Dump the aggregation of affinity `DataFrame`s into the base directory.
+        :param dump_name: Customize the dump name if desired.
+        :param num_proc: The number of processes to run.
+        Safe to pick `num_proc>=len(self.workers)`.
+        :param verbose: Print the progress bar.
+        :return: concatenated `affinity` outputs of each worker
+        """
+        self.affinities_ = self._calculate('affinity', num_proc=num_proc, verbose=verbose)
+        if dump:
+            self.affinities_.to_csv(f'{self.base_dir}/{dump_name}', sep='\t', index=False)
+        logging.info(f'AffinitySearch {self.id}: calculated worker affinities')
+        return self.affinities_
+
+    def stabilities(
+            self, dump: bool = True, dump_name: str = 'STABILITY.tsv',
+            num_proc: int = 1, verbose: bool = False, apo: bool = False) -> t.Optional[pd.DataFrame]:
+        """
+        Calls `calculate_stability` method of each worker and processes the results.
+        :param dump: Dump the aggregation of stabilities into the base directory.
+        :param dump_name: Customize the dump name if needed.
+        :param num_proc: A max number of processes to use.
+        :param verbose: Print the progress bar.
+        :param apo: Calculate stability of the apo state (else holo).
+        :return: Concatenated outputs of `calculate_stability` of each worker.
+        """
+        self.stabilities_ = self._calculate('stability', num_proc=num_proc, verbose=verbose, apo=apo)
+        if dump:
+            self.stabilities_.to_csv(f'{self.base_dir}/{dump_name}', sep='\t', index=False)
+        logging.info(f'AffinitySearch {self.id}: calculated worker stabilities')
+        return self.stabilities_
+
+    def collect_results(
+            self, num_proc: int = 1, verbose: bool = True, apo_stability: bool = True,
+            dump: bool = True, dump_name='RESULTS.tsv',
+            dump_affinity: bool = False, dump_affinity_name: str = 'AFFINITY.tsv',
+            dump_stability: bool = False, dump_stability_name: str = 'STABILITY.tsv'):
+        if self.affinities_ is None:
+            self.affinities_ = self.affinities(
+                num_proc=num_proc, verbose=verbose, dump=dump_affinity, dump_name=dump_affinity_name)
+        if self.stabilities_ is None:
+            self.stabilities_ = self.stabilities(
+                num_proc=num_proc, verbose=verbose, dump=dump_stability, dump_name=dump_stability_name,
+                apo=apo_stability)
+        if self.affinities_ is None:
+            logging.error('Could not collect affinities')
+            return None
+        if self.stabilities_ is None:
+            logging.error('Could not collect stabilities')
+            return None
+        self.results = pd.merge(
+            self.affinities_, self.stabilities_, on=['seq', 'pos'], how='inner')[
+            ['pos', 'seq', 'stability', 'affinity']]
+        if dump and self.results is not None:
+            self.results.to_csv(f'{self.base_dir}/{dump_name}', sep='\t', index=False)
+        logging.info(f'AffinitySearch {self.id}: collected results')
+        return self.results
+
+    def _calculate(self, what: str, num_proc: int = 1,
+                   verbose: bool = False, apo: bool = True) -> t.Optional[pd.DataFrame]:
+
+        def try_calculate(worker: AffinityWorker) -> t.Optional[pd.DataFrame]:
+            # Helps to safely attempt a calculation for a worker
+            try:
+                if what == 'affinity':
+                    return worker.calculate_affinity()
+                if what == 'stability':
+                    return worker.calculate_stability(apo=apo)
+                else:
+                    raise ValueError(f'What is {what}?')
+            except NoReferenceError:
+                return None
+
+        def wrap_calculated(worker: AffinityWorker, res: t.Optional[pd.DataFrame]):
+            # wraps results of each `AffinityWorker`
+            # warns the user if `AffinityWorker` did not yield results
+            pos = worker.run_dir.split('/')[-1]
+            if res is None:
+                logging.warning(f'AffinitySearch {self.id}: no output for pos {pos}')
+                return None
+            res['pos'] = pos
+            return res
+
+        # wrap workers into tqdm object if verbosity is desired
+        workers = tqdm(self.workers, desc=f'Calculating {what}') if verbose else self.workers
+
+        # get the affinity DataFrames from `AffinityWorkers`
+        if num_proc > 1:
+            with Pool(num_proc) as pool:
+                results = pool.map(try_calculate, workers)
+            for w, r in zip(self.workers, results):  # attributes would be unchanged within different processes
+                w.affinity = r
+        else:
+            results = list(map(try_calculate, workers))
+
+        # process the affinity DataFrames (if any)
+        wrapped = (wrap_calculated(w, r) for w, r in zip(self.workers, results))
+        filtered = list(filterfalse(lambda x: x is None, wrapped))
+
+        # none of the workers yielded affinity DataFrame -> return None
+        if not filtered:
+            logging.warning(f'AffinitySearch {self.id}: no position combination yielded {what} results')
+            return None
+
+        # otherwise, concatenate, dump and return the results
+        return pd.concat(filtered)
+
     def _setup_worker(self, active_subset: t.Union[t.List[int], int]) -> 'AffinityWorker':
         """
         Helper function setting up an AffinityWorker based on a subset of active positions
@@ -169,7 +285,7 @@ class AffinitySearch:
         worker = AffinityWorker(
             apo_setup=(apo_adapt_cfg, apo_mc_cfg, apo_matrix),
             holo_setup=(holo_adapt_cfg, holo_mc_cfg, holo_matrix),
-            active_pos=self.active,
+            active_pos=self.active, ref_seq=self.ref_seq,
             mut_space_n_types=self.mut_space_n_types, exe_path=self.exe_path,
             run_dir=f'{self.base_dir}/{exp_dir_name}',
             count_threshold=self.count_threshold,
@@ -178,72 +294,25 @@ class AffinitySearch:
         worker.setup()
         return worker
 
-    def workers_affinities(
-            self, dump: bool = True, dump_name: str = 'AFFINITY.tsv',
-            num_proc: int = 1, verbose: bool = False) -> t.Optional[pd.DataFrame]:
-        """
-        Calls `affinity` method for each `AffinityWorker` and processes the results.
-        :param dump: Dump the aggregation of affinity `DataFrame`s into the base directory.
-        :param dump_name: Customize dump name if desired.
-        :param num_proc: The number of processes to run.
-        Safe to pick `num_proc>=len(self.workers)`.
-        :param verbose: Print the progress bar.
-        :return:
-        """
-
-        def try_results(worker: AffinityWorker) -> t.Optional[pd.DataFrame]:
-            # Helps to safely attempt affinity calculation for a worker
-            try:
-                return worker.affinity()
-            except KeyError:  # KeyError most likely indicates unsampled reference sequence
-                return None
-
-        def wrap_results(worker: AffinityWorker, res: t.Optional[pd.DataFrame]):
-            # wraps results of each `AffinityWorker`
-            # warns the user if `AffinityWorker` did not yield results
-            pos = worker.run_dir.split('/')[-1]
-            if res is None:
-                logging.warning(f'AffinitySearch {self.id}: no affinity output for pos {pos}')
-                return None
-            res['pos'] = pos
-            return res
-
-        # wrap workers into tqdm object if verbosity is desired
-        workers = tqdm(self.workers, desc='Calculating affinity') if verbose else self.workers
-
-        # get the affinity DataFrames from `AffinityWorkers`
-        if num_proc > 1:
-            with Pool(num_proc) as pool:
-                results = pool.map(try_results, workers)
-            for w, r in zip(self.workers, results):  # attributes would be unchanged within different processes
-                w.aff = r
+    def _infer_ref_seq(self):
+        # find reference sequence from the `position_list` file
+        apo_pos = f'{self.apo_base_setup[2]}/position_list.dat'
+        holo_pos = f'{self.holo_base_setup[2]}/position_list.dat'
+        if Path(apo_pos).exists():
+            position_list = apo_pos
+        elif Path(holo_pos).exists():
+            position_list = holo_pos
         else:
-            results = list(map(try_results, workers))
-
-        # process the affinity DataFrames (if any)
-        wrapped = (wrap_results(w, r) for w, r in zip(self.workers, results))
-        filtered = list(filterfalse(lambda x: x is None, wrapped))
-
-        # none of the workers yielded affinity DataFrame -> return None
-        if not filtered:
-            logging.warning(f'AffinitySearch {self.id}: no position combination yielded affinity results')
-            return None
-
-        # otherwise, concatenate, dump and return the results
-        self.affinities = pd.concat(filtered)
-        if dump:
-            self.affinities.to_csv(f'{self.base_dir}/{dump_name}', sep='\t', index=False)
-        logging.info(f'AffinitySearch {self.id}: calculated worker affinities')
-        return self.affinities
-
-    def analyze_affinities(self, energy_threshold, num_threshold):
-        pass
+            raise RuntimeError('Could not find position_list.dat in matrix directories.')
+        self.ref_seq = u.get_reference(position_list, list(map(str, self.active)))
+        if not self.ref_seq:
+            raise RuntimeError('Reference sequence is empty')
 
 
 class AffinityWorker:
     def __init__(
             self, apo_setup: WorkerSetup, holo_setup: WorkerSetup,
-            active_pos: t.Iterable[int], exe_path: str, run_dir: str,
+            active_pos: t.Iterable[int], exe_path: str, run_dir: str, ref_seq: str,
             mut_space_n_types: int = 18, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC',
             apo_dir_name: str = 'apo', holo_dir_name: str = 'holo'):
@@ -267,7 +336,9 @@ class AffinityWorker:
         self.run_summaries: t.Optional[pd.DataFrame] = None
         self.ran_setup, self.ran_pipes = False, False
         self.temperature: t.Optional[float] = None
-        self.aff: t.Optional[pd.DataFrame] = None
+        self.affinity: t.Optional[pd.DataFrame] = None
+        self.stability: t.Optional[pd.DataFrame] = None
+        self.ref_seq: str = ref_seq
         self.default_bias_input_name = 'ADAPT.inp.dat'
         self.id = id(self)
         logging.info(f'AffinityWorker {self.id}: initialized')
@@ -402,6 +473,74 @@ class AffinityWorker:
         self.ran_pipes = True
         return self.run_summaries, self if return_self else None
 
+    def calculate_affinity(self) -> pd.DataFrame:
+        """
+        The method basically handles IO to run the externally defined `affinity` function.
+        :return: an output of the `affinity` function
+        ran on populations of sequences and biases attained by this worker
+        """
+        if not self.ran_pipes:
+            self.run()
+
+        # Handle biases
+        apo_bias, holo_bias = self._get_bias_paths()
+
+        # Find the populations
+        pop_apo, pop_holo = self._get_populations()
+
+        # Compute the affinity
+        self.affinity = affinity(
+            reference_seq=self.ref_seq,
+            pop_unbound=pop_apo,
+            pop_bound=pop_holo,
+            bias_unbound=apo_bias,
+            bias_bound=holo_bias,
+            temperature=self.temperature,
+            threshold=self.count_threshold,
+            positions=list(map(str, self.active_pos)))
+        logging.info(f'AffinityWorker {self.id}: finished calculating affinity')
+        return self.affinity
+
+    def calculate_stability(self, apo: bool = True) -> pd.DataFrame:
+        """
+        The method handles IO to run externally defined `stability` function.
+        :param apo: calculate stability of the apo state (otherwise, the holo state)
+        :return: an output of the `stability` function -- a DataFrame with `seq` and `stability` columns.
+        """
+        if not self.ran_pipes:
+            self.run()
+        biases = self._get_bias_paths()
+        pops = self._get_populations()
+        bias, pop = (biases[0], pops[0]) if apo else (biases[1], pops[1])
+        self.stability = stability(
+            population=pop,
+            bias=bias,
+            ref_seq=self.ref_seq,
+            temp=self.temperature,
+            threshold=self.count_threshold,
+            positions=list(map(str, self.active_pos)))
+        logging.info(f'AffinityWorker {self.id}: finished calculating stability')
+        return self.stability
+
+    def _get_bias_paths(self) -> t.Tuple[t.Optional[str], t.Optional[str]]:
+        apo_bias = self.apo_mc_cfg.get_field_value('Bias_Input_File')
+        holo_bias = self.holo_mc_cfg.get_field_value('Bias_Input_File') or apo_bias
+        return apo_bias, holo_bias
+
+    def _get_populations(self) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
+        pop_apo, pop_holo = self.apo_mc_pipe.results.seqs, self.holo_mc_pipe.results.seqs
+        if pop_apo is None:
+            pop_apo_path = f'{self.apo_mc_pipe.exp_dir}/{self.apo_mc_pipe.default_results_dump_name}'
+            if not Path(pop_apo_path).exists():
+                raise RuntimeError(f'Could not find the population at {pop_apo_path}')
+            pop_apo = pd.read_csv(pop_apo_path, sep='\t')
+        if pop_holo is None:
+            pop_holo_path = f'{self.holo_mc_pipe.exp_dir}/{self.holo_mc_pipe.default_results_dump_name}'
+            if not Path(pop_holo_path).exists():
+                raise RuntimeError(f'Could not find the population at {pop_holo_path}')
+            pop_holo = pd.read_csv(pop_holo_path, sep='\t')
+        return pop_apo, pop_holo
+
     def _get_temperature(self):
         # Run only after pipes has been setup
         pipes = [self.apo_adapt_pipe, self.apo_mc_pipe, self.holo_adapt_pipe, self.holo_mc_pipe]
@@ -441,62 +580,6 @@ class AffinityWorker:
         self.holo_adapt_cfg = self.holo_adapt_pipe.mc_conf.copy()
         self.apo_mc_cfg = self.apo_mc_pipe.mc_conf.copy()
         self.holo_mc_cfg = self.holo_mc_pipe.mc_conf.copy()
-
-    def affinity(self, position_list: t.Optional[str] = None) -> pd.DataFrame:
-        """
-        The function basically handles IO to run the `affinity` function.
-        :param position_list: path to a file holding list of positions,
-        typically called `positions_list.dat` in the `matrix` directory
-        :return: an output of the `affinity` function
-        ran on populations of sequences and biases attained by this worker
-        """
-        if not self.ran_pipes:
-            self.run()
-        # prepare the list of active positions (must be strings)
-        active = list(map(str, self.active_pos))
-        # find reference sequence from the `position_list` file
-        if not position_list:
-            apo_pos = f'{self.apo_matrix_path}/position_list.dat'
-            holo_pos = f'{self.holo_matrix_path}/position_list.dat'
-            if Path(apo_pos).exists():
-                position_list = apo_pos
-            elif Path(holo_pos).exists():
-                position_list = holo_pos
-            else:
-                raise RuntimeError('Could not find position_list.dat in matrix directories.')
-        ref_seq = u.get_reference(position_list, active)
-        if not ref_seq:
-            raise RuntimeError('Reference sequence is empty')
-
-        # Handle biases
-        apo_bias = self.apo_mc_cfg.get_field_value('Bias_Input_File')
-        holo_bias = self.holo_mc_cfg.get_field_value('Bias_Input_File') or apo_bias
-
-        # Find the populations
-        pop_apo, pop_holo = self.apo_mc_pipe.results.seqs, self.holo_mc_pipe.results.seqs
-        if pop_apo is None:
-            pop_apo_path = f'{self.apo_mc_pipe.exp_dir}/{self.apo_mc_pipe.default_results_dump_name}'
-            if not Path(pop_apo_path).exists():
-                raise RuntimeError(f'Could not find the population at {pop_apo_path}')
-            pop_apo = pd.read_csv(pop_apo_path, sep='\t')
-        if pop_holo is None:
-            pop_holo_path = f'{self.holo_mc_pipe.exp_dir}/{self.holo_mc_pipe.default_results_dump_name}'
-            if not Path(pop_holo_path).exists():
-                raise RuntimeError(f'Could not find the population at {pop_holo_path}')
-            pop_holo = pd.read_csv(pop_holo_path, sep='\t')
-
-        # Compute the affinity
-        self.aff = affinity(
-            reference_seq=ref_seq,
-            pop_unbound=pop_apo,
-            pop_bound=pop_holo,
-            bias_unbound=apo_bias,
-            bias_bound=holo_bias,
-            temperature=self.temperature,
-            threshold=self.count_threshold,
-            positions=active)
-        logging.info(f'AffinityWorker {self.id}: finished calculating affinity')
-        return self.aff
 
 
 if __name__ == '__main__':

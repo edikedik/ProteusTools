@@ -7,7 +7,7 @@ from math import log
 import click
 import pandas as pd
 
-from protmc.base import AminoAcidDict, AA_pair, AffinityResult
+from protmc.base import AminoAcidDict, AA_pair, AffinityResult, NoReferenceError
 from protmc.parsers import parse_population, parse_population_df, parse_bias
 from protmc.utils import compute_bias_energy
 
@@ -64,8 +64,12 @@ def affinity(
     # Count frequencies within the `bound` and `unbound` populations, respectively
     freq_b = (parse_population(pop_bound, threshold)
               if isinstance(pop_bound, str) else parse_population_df(pop_bound, threshold))
+    if reference_seq not in freq_b:
+        raise NoReferenceError(f'The reference sequence {reference_seq} is not in `bound` population')
     freq_u = (parse_population(pop_unbound, threshold)
               if isinstance(pop_unbound, str) else parse_population_df(pop_unbound, threshold))
+    if reference_seq not in freq_u:
+        raise NoReferenceError(f'The reference sequence {reference_seq} is not in `unbound` population')
     # print("pop_bound\n", sorted(freq_b.items()), "\n", "pop_unbound\n", sorted(freq_u.items()))
     # Identify sequences common to both populations
     common_ub = set(freq_b) & set(freq_u)

@@ -60,3 +60,11 @@ class AminoAcidDict:
     @property
     def proto_mapping(self) -> t.Dict[str, str]:
         return {'e': 'E', 'd': 'D', 'k': 'K', 'y': 'Y', 'j': 'H', 'h': 'H'}
+
+
+class NoReferenceError(Exception):
+    pass
+
+
+if __name__ == '__main__':
+    raise RuntimeError

@@ -4,7 +4,7 @@ from math import log
 
 import pandas as pd
 
-from protmc.base import AminoAcidDict, AA_pair
+from protmc.base import AminoAcidDict, AA_pair, NoReferenceError
 from protmc.parsers import parse_bias, parse_ref_energies, parse_population_df
 from protmc.utils import compute_bias_energy
 
@@ -35,7 +35,7 @@ def stability(
     eref = parse_ref_energies(eref_path) if eref_path is not None else None
     freq = parse_population_df(population, count_threshold=threshold)
     if ref_seq not in freq:
-        raise ValueError(f'Ref seq {ref_seq} is not in population.')
+        raise NoReferenceError(f'The reference {ref_seq} is not in population')
 
     def eref_energy(seq: str) -> float:
         """
