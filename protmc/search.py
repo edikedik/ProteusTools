@@ -1,4 +1,5 @@
 import logging
+import operator as op
 import typing as t
 from copy import deepcopy
 from itertools import filterfalse
@@ -10,8 +11,8 @@ from tqdm import tqdm
 
 from protmc import config
 from protmc import utils as u
-from protmc.base import NoReferenceError
 from protmc.affinity import affinity
+from protmc.base import NoReferenceError
 from protmc.pipeline import Pipeline, PipelineOutput
 from protmc.stability import stability
 
@@ -557,9 +558,6 @@ class AffinityWorker:
             """
             Transfers last bias state from the ADAPT simulation into MC experiments directory.
             Modifies the MC pipeline config accordingly
-            :param adapt_pipe:
-            :param mc_pipe:
-            :return:
             """
             adapt_cfg = adapt_pipe.mc_conf
             bias_path = adapt_cfg.get_field_value('Adapt_Output_File')
@@ -580,6 +578,46 @@ class AffinityWorker:
         self.holo_adapt_cfg = self.holo_adapt_pipe.mc_conf.copy()
         self.apo_mc_cfg = self.apo_mc_pipe.mc_conf.copy()
         self.holo_mc_cfg = self.holo_mc_pipe.mc_conf.copy()
+
+
+def infer_mut_space(
+        df: pd.DataFrame, pos_mapping: t.Mapping[int, int],
+        stability_lower: t.Optional[float], stability_upper: t.Optional[float],
+        affinity_lower: t.Optional[float], affinity_upper: t.Optional[float]):
+    """
+    Restricts the mutation space of a position given the results of AffinitySearch.
+
+    Filters the `df` given provided boundaries (optional).
+    For each position, subsets the `df`, leaving only entries with this position involved,
+    and obtains the amino acid types at this positions.
+    :param df: expects to get a DataFrame with four columns: (1) pos, (2) seq, (3) stability, (4) affinity
+    (i.e., produced by `AffinitySearch.collect_results` method).
+    :param pos_mapping: mapping between a position (i.e., the one used in a `pos` column) and its index in the `seq`
+    :param stability_lower: lower boundary for stability
+    :param stability_upper: upper boundary for stability
+    :param affinity_lower: lower boundary for affinity
+    :param affinity_upper: upper boundary for affinity
+    :return:
+    """
+    df_expected = ('pos', 'seq', 'stability', 'affinity')
+    if any(x not in df.columns for x in df_expected):
+        raise ValueError(f'Expected input `df` to have {df_expected} columns')
+    df = df.copy()
+    if stability_lower is not None:
+        df = df[df.stability > stability_lower]
+    if stability_upper is not None:
+        df = df[df.stability < stability_upper]
+    if affinity_lower is not None:
+        df = df[df.affinity > affinity_lower]
+    if affinity_upper is not None:
+        df = df[df.affinity < affinity_upper]
+
+    def mut_space_for_pos(pos):
+        pos_i = pos_mapping[int(pos)]
+        sub = df[df.pos.apply(lambda x: pos in x)]
+        return set(sub.seq.apply(op.itemgetter(pos_i)))
+
+    return {p: mut_space_for_pos(p) for p in map(str, pos_mapping)}
 
 
 if __name__ == '__main__':
