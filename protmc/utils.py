@@ -37,7 +37,7 @@ def count_sequences(seqs: t.Iterable[str]) -> int:
 
 
 def compute_bias_energy(
-        sequence: str, positions: t.Iterable[int],
+        sequence: str, positions: t.Iterable[str],
         bias: t.Dict[AA_pair, float], aa_mapping: t.Dict[str, str]) -> float:
     """
     Compute a bias for a given subsequence (determined by `positions`)
@@ -56,6 +56,12 @@ def compute_bias_energy(
 def sum_bias(bias1, step1, bias2, step2):
     b1, b2 = map(bias_to_df, map(StringIO, starmap(get_bias_state, [(bias1, step1), (bias2, step2)])))
     return pd.concat([b1, b2]).groupby('var', as_index=False).agg({'bias': 'sum'})
+
+
+def compute_seq_prob(energies: t.List[float], temp: float) -> np.ndarray:
+    ns = np.array(energies)
+    ex = np.exp((ns / temp) if temp else ns)
+    return ex / sum(ex)
 
 
 def interacting_pairs(structure_path: str, distance_threshold: float, positions: t.Optional[t.Iterable[int]] = None):

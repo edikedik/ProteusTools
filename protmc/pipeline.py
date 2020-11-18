@@ -266,7 +266,7 @@ class Pipeline:
 
         Path(f'{self.base_dir}/{self.exp_dir_name}').mkdir(exist_ok=True, parents=True)
         bias_path = f'{self.base_dir}/{self.exp_dir_name}/{mode}.inp.dat'
-        if not self.last_bias:
+        if self.last_bias is None:
             self._store_bias()
         self._dump_bias(bias_path)
 

@@ -2,7 +2,6 @@ import operator as op
 import sys
 import typing as t
 from functools import partial
-from itertools import product
 from math import log
 
 import click
@@ -14,7 +13,7 @@ from protmc.utils import compute_bias_energy
 
 
 def energy(
-        sequence: str, positions: t.Iterable[int],
+        sequence: str, positions: t.Iterable[str],
         bias_unbound: t.Dict[AA_pair, float], bias_bound: t.Dict[AA_pair, float],
         freq_unbound: t.Dict[str, float], freq_bound: t.Dict[str, float],
         aa_mapping: t.Dict[str, str], temp: float) -> float:
@@ -60,6 +59,8 @@ def affinity(
     :param positions: A list of desired positions (string values)
     :return:
     """
+    if not isinstance(positions, t.List):
+        positions = list(positions)
     # Count frequencies within the `bound` and `unbound` populations, respectively
     freq_b = (parse_population(pop_bound, threshold)
               if isinstance(pop_bound, str) else parse_population_df(pop_bound, threshold))

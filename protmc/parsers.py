@@ -94,7 +94,7 @@ def dump_bias_df(df: pd.DataFrame, path: str, step: t.Optional[int] = None):
         if step is not None:
             print(f'# STEP {step}', file=f)
         for _, v, b in df[['var', 'bias']].itertuples():
-            print(*v.split('-'), b, file=f)
+            print(*v.split('-'), round(b, 4), file=f)
     return
 
 
