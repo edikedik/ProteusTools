@@ -185,7 +185,7 @@ def parse_field(field_name: str, config: str) -> t.Optional[ProtMCfield]:
     :param config: a string with a config chunk
     :return: None if captured nothing else `ProtMCfield` object
     """
-    pattern = re.compile(f'(#(.*?)\n)?<{field_name}>\n((.|\n)*)\n<\/{field_name}>')
+    pattern = re.compile(f'(#(.*?)\n)?<{field_name}>\n((.|\n)*)\n</{field_name}>')
     try:
         capture = re.findall(pattern, config)[0]
     except IndexError:
@@ -211,7 +211,7 @@ def parse_fields(config: str) -> t.Optional[t.List[ProtMCfield]]:
             comment=match[1] if match[1] else None
         )
 
-    pattern = re.compile(r'(#(.*?)\n)?<(\w+)>\n((.|\n)*)\n<\/(\3)>')
+    pattern = re.compile(r'(#(.*?)\n)?<(\w+)>\n((.|\n)*)\n</(\3)>')
     capture = re.findall(pattern, config)
     if not capture:
         return None
