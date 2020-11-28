@@ -4,6 +4,7 @@ import typing as t
 from copy import deepcopy
 from itertools import filterfalse
 from pathlib import Path
+from subprocess import Popen
 
 import pandas as pd
 from multiprocess.pool import Pool
@@ -33,7 +34,7 @@ class AffinitySearch:
             self, positions: t.Iterable[t.Union[t.Collection[int], int]], active: t.List[int],
             apo_base_setup: WorkerSetup, holo_base_setup: WorkerSetup,
             exe_path: str, base_dir: str, ref_seq: t.Optional[str] = None,
-            mut_space_n_types: int = 18, count_threshold: int = 10,
+            mut_space_n_types: int = 18, mut_space_path: t.Optional[str] = None, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC',
             apo_dir_name: str = 'apo', holo_dir_name: str = 'holo'):
         """
@@ -83,6 +84,7 @@ class AffinitySearch:
         self.exe_path = exe_path
         self.base_dir = base_dir
         self.mut_space_n_types = mut_space_n_types
+        self.mut_space_path = mut_space_path
         self.count_threshold = count_threshold
         self.adapt_dir_name, self.mc_dir_name = adapt_dir_name, mc_dir_name
         self.apo_dir_name, self.holo_dir_name = apo_dir_name, holo_dir_name
@@ -110,7 +112,7 @@ class AffinitySearch:
         logging.info(f'AffinitySearch {self.id}: ran setup for workers')
 
     def run_workers(self, num_proc: int = 1, cleanup: bool = False,
-                    cleanup_kwargs: t.Optional[t.Dict] = None) -> pd.DataFrame:
+                    cleanup_kwargs: t.Optional[t.Dict] = None, verbose: bool = True) -> pd.DataFrame:
         """
         Run each of prepared `AffinityWorkers`.
         :param num_proc: Number of processes.
@@ -122,6 +124,7 @@ class AffinitySearch:
         :param cleanup: If True, each `Pipeline` within each of `AffinityWorker`s will call its `cleanup` method,
         by default removing `seq` and `ener` files (which can be customized via `cleanup_kwargs` argument.
         :param cleanup_kwargs: Pass this dictionary to `cleanup` method of each `Pipeline`.
+        :param verbose: Progress bar.
         :return: A DataFrame of summaries comprising run summary
         for each underlining `Pipeline` within each `AffinityWorker`.
         """
@@ -130,11 +133,12 @@ class AffinitySearch:
 
         # Obtain the run results for each of the workers
         common_args = dict(cleanup=cleanup, cleanup_kwargs=cleanup_kwargs, return_self=True)
+        run_workers = tqdm(self.workers, desc='Running workers') if verbose else self.workers
         if num_proc > 1:
             with Pool(num_proc) as workers:
-                results = workers.map(lambda w: w.run(parallel=False, **common_args), self.workers)
+                results = workers.map(lambda w: w.run(parallel=False, **common_args), run_workers)
         else:
-            results = [w.run(parallel=True, **common_args) for w in self.workers]
+            results = [w.run(parallel=True, **common_args) for w in run_workers]
 
         # Separate results
         summaries = [r[0] for r in results]
@@ -188,6 +192,20 @@ class AffinitySearch:
             dump: bool = True, dump_name='RESULTS.tsv',
             dump_affinity: bool = False, dump_affinity_name: str = 'AFFINITY.tsv',
             dump_stability: bool = False, dump_stability_name: str = 'STABILITY.tsv'):
+        """
+        Collects affinities and stabilities in one place - the results attribute.
+        Calls `affinities` and `stabilities` methods to populate the corresponding class attributes (if empty).
+        :param num_proc: The max number of processes allowed.
+        :param verbose: Progress bards for affinity and stability calculations.
+        :param apo_stability: Stability for the apo state, otherwise for the holo.
+        :param dump: Dump collected results into a base directory.
+        :param dump_name: Name of the results table.
+        :param dump_affinity: passed to `affinities` method.
+        :param dump_affinity_name: passed to `affinities` method.
+        :param dump_stability: passed to `stabilities` method.
+        :param dump_stability_name: passed to `stabilities` method.
+        :return:
+        """
         if self.affinities_ is None:
             self.affinities_ = self.affinities(
                 num_proc=num_proc, verbose=verbose, dump=dump_affinity, dump_name=dump_affinity_name)
@@ -272,6 +290,7 @@ class AffinitySearch:
         existing_constraints = u.extract_constraints([apo_adapt_cfg, apo_mc_cfg, holo_adapt_cfg, holo_mc_cfg])
         constraints = u.space_constraints(
             reference=self.ref_seq, subset=active_subset, active=self.active,
+            mutation_space=self.mut_space_path,
             existing_constraints=existing_constraints or None)
         adapt_space = u.adapt_space(active_subset)
         exp_dir_name = "-".join(map(str, active_subset)) if isinstance(active_subset, t.Iterable) else active_subset
@@ -398,54 +417,23 @@ class AffinityWorker:
         :param return_self: whether to return `self` (useful for CPU-parallelization)
         :return: a DataFrame with 4 rows (Summary's returned by the Pipeline's).
         """
-
-        def collect_res(pipe: Pipeline) -> t.Tuple[PipelineOutput, Pipeline]:
-            # Convention is to use walker you really care about as a first one
-            n_walkers = [1, pipe.mc_conf.get_field_value('Replica_Number'),
-                         pipe.mc_conf.get_field_value('Trajectory_Number')]
-            n_walkers = max(map(int, filterfalse(lambda x: x is None, n_walkers)))
-            walker = 0 if n_walkers > 1 else None
-            return pipe.collect_results(
-                dump_results=True, dump_bias=True, parallel=False, walker=walker, return_self=True)
-
-        def collect_pipes(pipe_apo, pipe_holo):
-            # Collect results for a pair of Pipeline's
-            if parallel:
-                with Pool(2) as workers:
-                    (res_apo, pipe_apo_), (res_holo, pipe_holo_) = workers.map(collect_res, [pipe_apo, pipe_holo])
-            else:
-                (res_apo, pipe_apo_), (res_holo, pipe_holo_) = map(collect_res, [pipe_apo, pipe_holo])
-            return (res_apo, pipe_apo_), (res_holo, pipe_holo_)
-
-        def wrap_summary(summary: pd.DataFrame, pipeline: str) -> pd.DataFrame:
-            summary = summary.copy()
-            summary['pipeline'] = pipeline
-            return summary
-
         if not self.ran_setup:
             logging.info(f'AffinityWorker {self.id}: running setup with default arguments')
             self.setup()
-        adapt_pipes = [self.apo_adapt_pipe, self.holo_adapt_pipe]
-        mc_pipes = [self.apo_mc_pipe, self.holo_mc_pipe]
 
         logging.info(f'AffinityWorker {self.id}: running ADAPT pipes')
-        # Spawn ADAPT subprocesses
-        adapt_proc = [p.run_non_blocking() for p in adapt_pipes]
-        # Wait for ADAPT subprocesses to finish
-        for proc in adapt_proc:
-            proc.communicate()
+        self.run_adapt(wait=True)
 
         # Transfer ADAPT biases into MC experiment directory
         self._transfer_biases()
 
         # Immediately start detached subprocesses for running MC
         logging.info(f'AffinityWorker {self.id}: running MC pipes')
-        mc_proc = [p.run_non_blocking() for p in mc_pipes]
+        mc_proc = self.run_mc(wait=False)
 
         # Meanwhile collect the results of ADAPT runs
         logging.info(f'AffinityWorker {self.id}: aggregating ADAPT results')
-        ((self.apo_adapt_results, self.apo_adapt_pipe),
-         (self.holo_adapt_results, self.holo_adapt_pipe)) = collect_pipes(*adapt_pipes)
+        self.collect_adapt(parallel=parallel)
 
         # Wait for MC subprocesses to finish
         for proc in mc_proc:
@@ -453,8 +441,7 @@ class AffinityWorker:
 
         # Collect the results of MC runs
         logging.info(f'AffinityWorker {self.id}: aggregating MC results')
-        ((self.apo_mc_results, self.apo_mc_pipe),
-         (self.holo_mc_results, self.holo_mc_pipe)) = collect_pipes(*mc_pipes)
+        self.collect_mc(parallel=parallel)
 
         logging.info(f'AffinityWorker {self.id}: finished running pipes')
 
@@ -466,13 +453,71 @@ class AffinityWorker:
                 p.cleanup(**kw)
 
         # collect summaries into a single DataFrame
-        self.run_summaries = pd.concat([
-            wrap_summary(r.summary, p) for r, p in zip(
+        self.collect_summaries()
+        self.ran_pipes = True
+        return self.run_summaries, self if return_self else None
+
+    def run_adapt(self, wait: bool = True) -> t.Tuple[Popen, Popen]:
+        """
+        Call apo and holo ADAPT parallel subprocesses
+        :param wait: Wait for simulations to finish
+        :return: (apo, holo) Popen objects
+        """
+        # Spawn ADAPT subprocesses
+        proc = (self.apo_adapt_pipe.run_non_blocking(), self.holo_adapt_pipe.run_non_blocking())
+        if wait:
+            # Wait for ADAPT subprocesses to finish
+            for p in proc:
+                p.communicate()
+        return proc
+
+    def collect_adapt(self, parallel: bool = False) -> None:
+        """
+        Collect the results of ADAPT simulation.
+        This will rewrite attributes, holding adapt pipes and their run results.
+        :param parallel: collect Pipelines in parallel
+        """
+        pipes = [self.apo_adapt_pipe, self.holo_adapt_pipe]
+        ((self.apo_adapt_results, self.apo_adapt_pipe),
+         (self.holo_adapt_results, self.holo_adapt_pipe)) = self._collect_pipes(*pipes, parallel=parallel)
+
+    def run_mc(self, wait: bool = True) -> t.Tuple[Popen, Popen]:
+        """
+        Call apo and holo MC parallel subprocesses
+        :param wait: Wait for completion
+        :return: (apo, holo) Popen objects
+        """
+        # Spawn MC subprocesses
+        proc = (self.apo_mc_pipe.run_non_blocking(), self.holo_mc_pipe.run_non_blocking())
+        if wait:
+            # Wait for ADAPT subprocesses to finish
+            for p in proc:
+                p.communicate()
+        return proc
+
+    def collect_mc(self, parallel: bool = False) -> None:
+        """
+        Collect the results of MC simulation.
+        This will rewrite attributes holding mc pipes and their run results.
+        :param parallel: collect Pipelines in parallel
+        """
+        pipes = [self.apo_mc_pipe, self.holo_mc_pipe]
+        ((self.apo_mc_results, self.apo_mc_pipe),
+         (self.holo_mc_results, self.holo_mc_pipe)) = self._collect_pipes(*pipes, parallel=parallel)
+
+    def collect_summaries(self):
+        """
+        Combine summaries of all Pipeline objects into a single DataFrame and write it into a `run_summaries` attribute.
+        Appends to existing `run_summaries` by default.
+        """
+        run_summaries = pd.concat([
+            self._wrap_summary(r.summary, p) for r, p in zip(
                 [self.apo_adapt_results, self.apo_mc_results, self.apo_mc_results, self.holo_mc_results],
                 ['apo_adapt', 'holo_adapt', 'apo_mc', 'holo_mc'])]
         )
-        self.ran_pipes = True
-        return self.run_summaries, self if return_self else None
+        self.run_summaries = (run_summaries if self.run_summaries is None else pd.concat(
+            [self.run_summaries, run_summaries]))
+        return self.run_summaries
 
     def calculate_affinity(self) -> pd.DataFrame:
         """
@@ -573,6 +618,32 @@ class AffinityWorker:
         transfer_bias(self.holo_adapt_pipe, self.holo_mc_pipe)
         return self.apo_mc_pipe, self.holo_mc_pipe
 
+    @staticmethod
+    def _collect_res(pipe: Pipeline) -> t.Tuple[PipelineOutput, Pipeline]:
+        # Convention is to use walker you really care about as a first one
+        n_walkers = [1, pipe.mc_conf.get_field_value('Replica_Number'),
+                     pipe.mc_conf.get_field_value('Trajectory_Number')]
+        n_walkers = max(map(int, filterfalse(lambda x: x is None, n_walkers)))
+        walker = 0 if n_walkers > 1 else None
+        return pipe.collect_results(
+            dump_results=True, dump_bias=True, parallel=False,
+            walker=walker, return_self=True)
+
+    def _collect_pipes(self, pipe_apo: Pipeline, pipe_holo: Pipeline, parallel: bool):
+        # Collect results for a pair of Pipeline's
+        if parallel:
+            with Pool(2) as workers:
+                (res_apo, pipe_apo_), (res_holo, pipe_holo_) = workers.map(self._collect_res, [pipe_apo, pipe_holo])
+        else:
+            (res_apo, pipe_apo_), (res_holo, pipe_holo_) = map(self._collect_res, [pipe_apo, pipe_holo])
+        return (res_apo, pipe_apo_), (res_holo, pipe_holo_)
+
+    @staticmethod
+    def _wrap_summary(summary: pd.DataFrame, pipeline: str) -> pd.DataFrame:
+        summary = summary.copy()
+        summary['pipeline'] = pipeline
+        return summary
+
     def _copy_configs(self):
         self.apo_adapt_cfg = self.apo_adapt_pipe.mc_conf.copy()
         self.holo_adapt_cfg = self.holo_adapt_pipe.mc_conf.copy()
@@ -602,6 +673,19 @@ def infer_mut_space(
     df_expected = ('pos', 'seq', 'stability', 'affinity')
     if any(x not in df.columns for x in df_expected):
         raise ValueError(f'Expected input `df` to have {df_expected} columns')
+    df = _filter_results(df, stability_lower, stability_upper, affinity_lower, affinity_upper)
+
+    def mut_space_for_pos(pos):
+        pos_i = pos_mapping[int(pos)]
+        sub = df[df.pos.apply(lambda x: pos in x)]
+        return set(sub.seq.apply(op.itemgetter(pos_i)))
+
+    return {p: mut_space_for_pos(p) for p in map(str, pos_mapping)}
+
+
+def _filter_results(
+        df: pd.DataFrame, stability_lower: t.Optional[float], stability_upper: t.Optional[float],
+        affinity_lower: t.Optional[float], affinity_upper: t.Optional[float]) -> pd.DataFrame:
     df = df.copy()
     if stability_lower is not None:
         df = df[df.stability > stability_lower]
@@ -611,13 +695,7 @@ def infer_mut_space(
         df = df[df.affinity > affinity_lower]
     if affinity_upper is not None:
         df = df[df.affinity < affinity_upper]
-
-    def mut_space_for_pos(pos):
-        pos_i = pos_mapping[int(pos)]
-        sub = df[df.pos.apply(lambda x: pos in x)]
-        return set(sub.seq.apply(op.itemgetter(pos_i)))
-
-    return {p: mut_space_for_pos(p) for p in map(str, pos_mapping)}
+    return df
 
 
 if __name__ == '__main__':
