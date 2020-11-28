@@ -64,12 +64,24 @@ def compute_seq_prob(energies: t.List[float], temp: float) -> np.ndarray:
     return ex / sum(ex)
 
 
-def interacting_pairs(structure_path: str, distance_threshold: float, positions: t.Optional[t.Iterable[int]] = None):
+def interacting_pairs(
+        structure_path: str,
+        distance_threshold: float,
+        atom_name: str = 'CA',
+        positions: t.Optional[t.Iterable[int]] = None):
+    """
+    Finds residues in structure within distance threshold.
+    :param structure_path: path to a structure file
+    :param distance_threshold: min distance between elements (non-inclusive)
+    :param atom_name: filter atoms to this names (CA, CB, and so on)
+    :param positions: filter positions to the ones in this list
+    :return: numpy array with shape (N, 2) where N is a number of interacting pairs
+    """
     st = io.load_structure(structure_path)
-    ca = st[(st.atom_name == 'CA') & bst.filter_amino_acids(st)]
+    ca = st[(st.atom_name == atom_name) & bst.filter_amino_acids(st)]
     if positions is not None:
         ca = ca[np.isin(ca.res_id, list(positions))]
-    pairs = np.array(list(combinations(ca.res_id, 2)))
+    pairs = np.array(list(combinations(np.unique(ca.res_id), 2)))
     pairs_idx = np.array(list(combinations(np.arange(len(ca)), 2)))
     dist = bst.index_distance(ca, pairs_idx)
     return pairs[dist < distance_threshold]
@@ -88,12 +100,34 @@ def get_reference(position_list: str, positions: t.Optional[t.Container[str]] = 
         split = filter(lambda l: len(l) == 4, map(lambda l: l.split(), f))
         if positions:
             split = filter(lambda l: l[0] in positions, split)
-        return "".join(aa_mapping[l[2]] for l in split)
+        return "".join(aa_mapping[line[2]] for line in split)
+
+
+def get_reference_from_structure(structure_path: str, positions: t.Optional[t.Container[int]] = None) -> str:
+    aa_mapping = AminoAcidDict().aa_dict
+    residues = zip(*bst.get_residues(io.load_structure(structure_path)))
+    if positions is not None:
+        residues = (r for r in residues if r[0] in positions)
+    return "".join([aa_mapping[r[1]] for r in residues])
 
 
 def space_constraints(
         reference: str, subset: t.Iterable[int], active: t.Iterable[int],
+        mutation_space: t.Union[t.List[str], str, None] = None,
         existing_constraints: t.Optional[t.List[str]] = None) -> t.List[str]:
+    """
+    Constraints all the positions of the {active} - {subset} = {inactive} set members to their native types.
+    The function produces a list of values ready to be used in Space_Constraints protMC parameter.
+    CHECK
+    :param reference: Reference sequence of the {active} positions set.
+    :param subset: A subset of positions to exclude from active.
+    :param active: A set of active positions, must be equal in length to `reference`.
+    :param mutation_space: A list of available types or a path to a mutation_space file.
+    If present, constraints will be filtered according to the mutation space.
+    :param existing_constraints: A list of existing constraints.
+    If there are existing constraints, they will be merged into the output.
+    :return: A list of sequence space constraints.
+    """
     mapping = AminoAcidDict().aa_dict
     if not isinstance(subset, t.List):
         subset = list(subset)
@@ -110,6 +144,14 @@ def space_constraints(
     constraints = sorted(
         [f'{pos} {mapping[aa]}' for pos, aa in zip(inactive, ref_subset)],
         key=lambda x: int(x.split()[0]))
+    if mutation_space is not None:
+        if isinstance(mutation_space, str) and Path(mutation_space).exists():
+            with open(mutation_space) as f:
+                mutation_space = {x.rstrip() for x in f if x != '\n'}
+        constraints = map(
+            lambda l: " ".join(chain([l[0]], filter(lambda aa: aa in mutation_space, l[1:]))),
+            (x.split() for x in constraints))
+        constraints = list(filter(lambda x: len(x.split()) > 1, constraints))
     if existing_constraints:
         constraints = merge_constraints(existing=existing_constraints, additional=constraints)
     return constraints
