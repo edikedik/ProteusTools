@@ -5,6 +5,7 @@ from copy import deepcopy
 from itertools import filterfalse
 from pathlib import Path
 from subprocess import Popen
+from time import time
 
 import pandas as pd
 from multiprocess.pool import Pool
@@ -36,7 +37,8 @@ class AffinitySearch:
             exe_path: str, base_dir: str, ref_seq: t.Optional[str] = None,
             mut_space_n_types: int = 18, mut_space_path: t.Optional[str] = None, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC',
-            apo_dir_name: str = 'apo', holo_dir_name: str = 'holo'):
+            apo_dir_name: str = 'apo', holo_dir_name: str = 'holo',
+            temperature: t.Optional[float] = None, id_: t.Optional[str] = None):
         """
         :param positions: Iterable collection of positions or their combinations.
         :param active: A list of active positions (all mutable positions).
@@ -53,6 +55,10 @@ class AffinitySearch:
         :param mc_dir_name: A name of a directory to store MC simulations.
         :param apo_dir_name: A name of a directory to store apo-state simulations.
         :param holo_dir_name: A name of a directory to store holo-state simulations.
+        :param temperature: Temperature employed in affinity and stability calculations.
+        If not provided, each worker will attempt to infer temperature from configs and raise a ValueError
+        in case of inconsistencies.
+        :param id_: ID of this object used for logging purposes.
         The directory structure of AffinitySearch is the following:
         ```
         base_dir
@@ -88,6 +94,7 @@ class AffinitySearch:
         self.count_threshold = count_threshold
         self.adapt_dir_name, self.mc_dir_name = adapt_dir_name, mc_dir_name
         self.apo_dir_name, self.holo_dir_name = apo_dir_name, holo_dir_name
+        self.temperature = temperature
         self.positions = positions
         if not isinstance(positions, t.Tuple):
             self.positions = tuple(self.positions)
@@ -99,7 +106,7 @@ class AffinitySearch:
         self.affinities_: t.Optional[pd.DataFrame] = None
         self.stabilities_: t.Optional[pd.DataFrame] = None
         self.results: t.Optional[pd.DataFrame] = None
-        self.id = id(self)
+        self.id = id(self) if id_ is None else id_
         logging.info(f'AffinitySearch {self.id}: initialized')
 
     def setup_workers(self) -> None:
@@ -112,18 +119,22 @@ class AffinitySearch:
         logging.info(f'AffinitySearch {self.id}: ran setup for workers')
 
     def run_workers(self, num_proc: int = 1, cleanup: bool = False,
-                    cleanup_kwargs: t.Optional[t.Dict] = None, verbose: bool = True) -> pd.DataFrame:
+                    cleanup_kwargs: t.Optional[t.Dict] = None, overwrite_summaries: bool = False,
+                    run_adapt: bool = True, run_mc: bool = True, transfer_bias: bool = True,
+                    continue_adapt: bool = False, config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None,
+                    verbose: bool = True) -> pd.DataFrame:
         """
         Run each of prepared `AffinityWorkers`.
         :param num_proc: Number of processes.
-        In general, each process will run a separate `AffinityWorker`.
-        The latter takes 2-3 CPU units (2 for `Pipeline`s, 1 for results aggregation).
-        However, if some config specifies `n` walkers, the corresponding `Pipeline` will take `n` CPUs.
-        Hence, in the latter case one should carefully count the maximal `num_proc`.
-        WARNING: currently, even if `num_proc=1`, each worker will take 2 CPUs.
         :param cleanup: If True, each `Pipeline` within each of `AffinityWorker`s will call its `cleanup` method,
         by default removing `seq` and `ener` files (which can be customized via `cleanup_kwargs` argument.
         :param cleanup_kwargs: Pass this dictionary to `cleanup` method of each `Pipeline`.
+        :param overwrite_summaries:  Overwrite existing `run_summary`, if any.
+        :param run_adapt: Run ADAPT mode Pipelines.
+        :param run_mc: Run MC mode Pipelines.
+        :param transfer_bias: Transfer last ADAPT biases to the MC experiment directories.
+        :param continue_adapt: Continue ALF using previously accumulated biases.
+        :param config_changes: If `continue_adapt`, apply these changes to `mc_conf` before running.
         :param verbose: Progress bar.
         :return: A DataFrame of summaries comprising run summary
         for each underlining `Pipeline` within each `AffinityWorker`.
@@ -132,11 +143,15 @@ class AffinitySearch:
             self.setup_workers()
 
         # Obtain the run results for each of the workers
-        common_args = dict(cleanup=cleanup, cleanup_kwargs=cleanup_kwargs, return_self=True)
+        common_args = dict(
+            cleanup=cleanup, cleanup_kwargs=cleanup_kwargs, return_self=True,
+            run_adapt=run_adapt, run_mc=run_mc, transfer_bias=transfer_bias,
+            continue_adapt=continue_adapt, config_changes=config_changes,
+            overwrite_summaries=overwrite_summaries)
         run_workers = tqdm(self.workers, desc='Running workers') if verbose else self.workers
         if num_proc > 1:
-            with Pool(num_proc) as workers:
-                results = workers.map(lambda w: w.run(parallel=False, **common_args), run_workers)
+            with Pool(num_proc // 2) as workers:
+                results = workers.map(lambda w: w.run(collect_parallel=False, **common_args), run_workers)
         else:
             results = [w.run(parallel=True, **common_args) for w in run_workers]
 
@@ -193,7 +208,7 @@ class AffinitySearch:
             dump_affinity: bool = False, dump_affinity_name: str = 'AFFINITY.tsv',
             dump_stability: bool = False, dump_stability_name: str = 'STABILITY.tsv'):
         """
-        Collects affinities and stabilities in one place - the results attribute.
+        Collects affinities and stabilities in one place - the `results` attribute.
         Calls `affinities` and `stabilities` methods to populate the corresponding class attributes (if empty).
         :param num_proc: The max number of processes allowed.
         :param verbose: Progress bards for affinity and stability calculations.
@@ -310,7 +325,8 @@ class AffinitySearch:
             run_dir=f'{self.base_dir}/{exp_dir_name}',
             count_threshold=self.count_threshold,
             adapt_dir_name=self.adapt_dir_name, mc_dir_name=self.mc_dir_name,
-            apo_dir_name=self.apo_dir_name, holo_dir_name=self.holo_dir_name)
+            apo_dir_name=self.apo_dir_name, holo_dir_name=self.holo_dir_name,
+            temperature=self.temperature, id_=exp_dir_name)
         worker.setup()
         return worker
 
@@ -335,7 +351,8 @@ class AffinityWorker:
             active_pos: t.Iterable[int], exe_path: str, run_dir: str, ref_seq: str,
             mut_space_n_types: int = 18, count_threshold: int = 10,
             adapt_dir_name: str = 'ADAPT', mc_dir_name: str = 'MC',
-            apo_dir_name: str = 'apo', holo_dir_name: str = 'holo'):
+            apo_dir_name: str = 'apo', holo_dir_name: str = 'holo',
+            temperature: t.Optional[float] = None, id_: t.Optional[str] = None):
         self.apo_adapt_cfg, self.apo_mc_cfg, self.apo_matrix_path = apo_setup
         self.holo_adapt_cfg, self.holo_mc_cfg, self.holo_matrix_path = holo_setup
         self.active_pos = active_pos
@@ -345,6 +362,7 @@ class AffinityWorker:
         self.count_threshold = count_threshold
         self.adapt_dir_name, self.mc_dir_name = adapt_dir_name, mc_dir_name
         self.apo_dir_name, self.holo_dir_name = apo_dir_name, holo_dir_name
+        self.temperature: t.Optional[float] = temperature
         self.apo_adapt_pipe: t.Optional[Pipeline] = None
         self.holo_adapt_pipe: t.Optional[Pipeline] = None
         self.apo_mc_pipe: t.Optional[Pipeline] = None
@@ -355,21 +373,20 @@ class AffinityWorker:
         self.holo_mc_results: t.Optional[PipelineOutput] = None
         self.run_summaries: t.Optional[pd.DataFrame] = None
         self.ran_setup, self.ran_pipes = False, False
-        self.temperature: t.Optional[float] = None
         self.affinity: t.Optional[pd.DataFrame] = None
         self.stability: t.Optional[pd.DataFrame] = None
         self.ref_seq: str = ref_seq
         self.default_bias_input_name = 'ADAPT.inp.dat'
-        self.id = id(self)
+        self.id = id_ or id(self)
         logging.info(f'AffinityWorker {self.id}: initialized')
 
     def setup(self) -> None:
-        def create_pipe(cfg, base_dir, exp_dir, energy_dir):
+        def create_pipe(cfg, base_dir, exp_dir, energy_dir, id_):
             # Simplifies the creation of Pipeline by encapsulating common arguments
             return Pipeline(
                 base_post_conf=None, exe_path=self.exe_path,
                 mut_space_n_types=self.mut_space_n_types, active_pos=list(self.active_pos),
-                base_mc_conf=cfg, base_dir=base_dir, exp_dir_name=exp_dir, energy_dir=energy_dir)
+                base_mc_conf=cfg, base_dir=base_dir, exp_dir_name=exp_dir, energy_dir=energy_dir, id_=id_)
 
         def handle_bias_inp(pipe: Pipeline) -> None:
             # Simplifies the assignment of the bias input path
@@ -381,13 +398,17 @@ class AffinityWorker:
 
         # create Pipeline objects
         self.apo_adapt_pipe = create_pipe(
-            cfg=self.apo_adapt_cfg, base_dir=base_apo, exp_dir=self.adapt_dir_name, energy_dir=self.apo_matrix_path)
+            cfg=self.apo_adapt_cfg, base_dir=base_apo, exp_dir=self.adapt_dir_name, energy_dir=self.apo_matrix_path,
+            id_=f'AffinityWorker {self.id} apo_adapt')
         self.holo_adapt_pipe = create_pipe(
-            cfg=self.holo_adapt_cfg, base_dir=base_holo, exp_dir=self.adapt_dir_name, energy_dir=self.holo_matrix_path)
+            cfg=self.holo_adapt_cfg, base_dir=base_holo, exp_dir=self.adapt_dir_name, energy_dir=self.holo_matrix_path,
+            id_=f'AffinityWorker {self.id} holo_adapt')
         self.apo_mc_pipe = create_pipe(
-            cfg=self.apo_mc_cfg, base_dir=base_apo, exp_dir=self.mc_dir_name, energy_dir=self.apo_matrix_path)
+            cfg=self.apo_mc_cfg, base_dir=base_apo, exp_dir=self.mc_dir_name, energy_dir=self.apo_matrix_path,
+            id_=f'AffinityWorker {self.id} apo_mc')
         self.holo_mc_pipe = create_pipe(
-            cfg=self.holo_mc_cfg, base_dir=base_holo, exp_dir=self.mc_dir_name, energy_dir=self.holo_matrix_path)
+            cfg=self.holo_mc_cfg, base_dir=base_holo, exp_dir=self.mc_dir_name, energy_dir=self.holo_matrix_path,
+            id_=f'AffinityWorker {self.id} holo_mc')
 
         # write bias input paths into configs prior to running setup (thus, dumping configs)
         handle_bias_inp(self.apo_mc_pipe), handle_bias_inp(self.holo_mc_pipe)
@@ -401,75 +422,72 @@ class AffinityWorker:
         self._copy_configs()
 
         # parse the temperature out of configs
-        self.temperature = self._get_temperature()
+        self.temperature = self.temperature or self._get_temperature()
 
         self.ran_setup = True
         logging.info(f'AffinityWorker {self.id}: completed setting up Pipelines')
 
-    def run(self, parallel: bool = True, cleanup: bool = False,
+    def run(self, cleanup: bool = False,
             cleanup_kwargs: t.Optional[t.Dict] = None,
+            collect_parallel: bool = False, overwrite_summaries: bool = False,
+            run_adapt: bool = True, run_mc: bool = True, transfer_bias: bool = True,
+            continue_adapt: bool = False, config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None,
             return_self: bool = True) -> t.Tuple[pd.DataFrame, t.Optional['AffinityWorker']]:
         """
         Run AffinityWorker.
-        :param parallel: if True will collect results for MC and ADAPT in parallel
-        :param cleanup: if True will call the `cleanup` method for each of the four pipelines
-        :param cleanup_kwargs: pass these kwargs to the `cleanup` method if `cleanup==True`
+        :param cleanup: If True will call the `cleanup` method for each of the four pipelines.
+        :param cleanup_kwargs: Pass these kwargs to the `cleanup` method if `cleanup==True`.
+        :param collect_parallel: If True will collect results for MC and ADAPT in parallel,
+        using Pool of two workers.
+        :param overwrite_summaries:  Overwrite existing `run_summary`, if any.
+        :param run_adapt: Run ADAPT mode Pipelines.
+        :param run_mc: Run MC mode Pipelines.
+        :param transfer_bias: Transfer last ADAPT bias to the MC experiment directory.
+        :param continue_adapt: Continue ALF using previously accumulated bias.
+        :param config_changes: If `continue_adapt`, apply these changes to `mc_conf` before running.
         :param return_self: whether to return `self` (useful for CPU-parallelization)
         :return: a DataFrame with 4 rows (Summary's returned by the Pipeline's).
         """
+        start = time()
         if not self.ran_setup:
             logging.info(f'AffinityWorker {self.id}: running setup with default arguments')
             self.setup()
 
-        logging.info(f'AffinityWorker {self.id}: running ADAPT pipes')
-        self.run_adapt(wait=True)
+        if not (run_adapt or run_mc):
+            raise ValueError(f'AffinityWorker {self.id}: nothing to run')
 
-        # Transfer ADAPT biases into MC experiment directory
-        self._transfer_biases()
+        if run_adapt or continue_adapt:
+            if continue_adapt:
+                f'AffinityWorker {self.id}: setting up ADAPT continuation'
+                self.apo_adapt_pipe.setup_continuation(
+                    new_exp_name=self.apo_adapt_pipe.exp_dir_name,
+                    mc_config_changes=config_changes)
+                self.holo_adapt_pipe.setup_continuation(
+                    new_exp_name=self.holo_adapt_pipe.exp_dir_name,
+                    mc_config_changes=config_changes)
+            logging.info(f'AffinityWorker {self.id}: running ADAPT pipes')
+            self._run_pipes(
+                self.apo_adapt_pipe, self.holo_adapt_pipe, 'adapt',
+                wait=True, collect=True, collect_parallel=collect_parallel,
+                cleanup=cleanup, cleanup_kwargs=cleanup_kwargs)
 
-        # Immediately start detached subprocesses for running MC
-        logging.info(f'AffinityWorker {self.id}: running MC pipes')
-        mc_proc = self.run_mc(wait=False)
+        if transfer_bias:
+            # Transfer ADAPT biases into MC experiment directory
+            self.transfer_biases()
 
-        # Meanwhile collect the results of ADAPT runs
-        logging.info(f'AffinityWorker {self.id}: aggregating ADAPT results')
-        self.collect_adapt(parallel=parallel)
-
-        # Wait for MC subprocesses to finish
-        for proc in mc_proc:
-            proc.communicate()
-
-        # Collect the results of MC runs
-        logging.info(f'AffinityWorker {self.id}: aggregating MC results')
-        self.collect_mc(parallel=parallel)
-
-        logging.info(f'AffinityWorker {self.id}: finished running pipes')
-
-        # optionally cleanup each pipeline
-        if cleanup:
-            logging.info(f'AffinityWorker {self.id}: cleaning up pipes')
-            kw = {} if cleanup_kwargs is None else cleanup_kwargs
-            for p in [self.apo_adapt_pipe, self.apo_mc_pipe, self.holo_adapt_pipe, self.holo_mc_pipe]:
-                p.cleanup(**kw)
+        if run_mc:
+            logging.info(f'AffinityWorker {self.id}: running MC pipes')
+            self._run_pipes(
+                self.apo_mc_pipe, self.holo_mc_pipe, 'mc',
+                wait=True, collect=True, collect_parallel=collect_parallel,
+                cleanup=cleanup, cleanup_kwargs=cleanup_kwargs)
 
         # collect summaries into a single DataFrame
-        self.collect_summaries()
+        self.collect_summaries(overwrite=overwrite_summaries)
         self.ran_pipes = True
+        end = time()
+        logging.info(f'AffinityWorker {self.id}: finished running pipes in {end - start}m')
         return self.run_summaries, self if return_self else None
-
-    def run_adapt(self, wait: bool = True) -> t.Tuple[Popen, Popen]:
-        """
-        Call apo and holo ADAPT parallel subprocesses
-        :param wait: Wait for simulations to finish
-        :return: (apo, holo) Popen objects
-        """
-        # Spawn ADAPT subprocesses
-        proc = (self.apo_adapt_pipe.run_non_blocking(), self.holo_adapt_pipe.run_non_blocking())
-        if wait:
-            # Wait for ADAPT subprocesses to finish
-            for p in proc:
-                p.communicate()
-        return proc
 
     def collect_adapt(self, parallel: bool = False) -> None:
         """
@@ -505,18 +523,20 @@ class AffinityWorker:
         ((self.apo_mc_results, self.apo_mc_pipe),
          (self.holo_mc_results, self.holo_mc_pipe)) = self._collect_pipes(*pipes, parallel=parallel)
 
-    def collect_summaries(self):
+    def collect_summaries(self, overwrite: bool = False):
         """
         Combine summaries of all Pipeline objects into a single DataFrame and write it into a `run_summaries` attribute.
         Appends to existing `run_summaries` by default.
         """
-        run_summaries = pd.concat([
-            self._wrap_summary(r.summary, p) for r, p in zip(
-                [self.apo_adapt_results, self.apo_mc_results, self.apo_mc_results, self.holo_mc_results],
-                ['apo_adapt', 'holo_adapt', 'apo_mc', 'holo_mc'])]
+        summaries = zip(
+                [self.apo_adapt_results, self.holo_adapt_results, self.apo_mc_results, self.holo_mc_results],
+                ['apo_adapt', 'holo_adapt', 'apo_mc', 'holo_mc']
         )
-        self.run_summaries = (run_summaries if self.run_summaries is None else pd.concat(
-            [self.run_summaries, run_summaries]))
+        summaries = filter(lambda x: x[0] is not None, summaries)
+        run_summaries = pd.concat([self._wrap_summary(r.summary, p) for r, p in summaries])
+        self.run_summaries = (
+            run_summaries if self.run_summaries is None or overwrite
+            else pd.concat([self.run_summaries, run_summaries]).drop_duplicates())
         return self.run_summaries
 
     def calculate_affinity(self) -> pd.DataFrame:
@@ -568,6 +588,63 @@ class AffinityWorker:
         logging.info(f'AffinityWorker {self.id}: finished calculating stability')
         return self.stability
 
+    def transfer_biases(self):
+        def transfer_bias(adapt_pipe: Pipeline, mc_pipe: Pipeline):
+            """
+            Transfers last bias state from the ADAPT simulation into MC exp directory.
+            """
+            if adapt_pipe.last_bias is None:
+                logging.warning(f'AffinityWorker {self.id}: last bias for {adapt_pipe.id} is absent')
+                adapt_pipe.store_bias()
+                if adapt_pipe.last_bias is None:
+                    raise ValueError(f'AffinityWorker {self.id}: could not find bias for {adapt_pipe.id}')
+            bias_path = f'{mc_pipe.base_dir}/{mc_pipe.exp_dir_name}/{self.default_bias_input_name}'
+            adapt_pipe.dump_bias(path=bias_path)
+            return None
+
+        transfer_bias(self.apo_adapt_pipe, self.apo_mc_pipe)
+        transfer_bias(self.holo_adapt_pipe, self.holo_mc_pipe)
+        return self.apo_mc_pipe, self.holo_mc_pipe
+
+    def _run_pipes(
+            self, pipe_apo: Pipeline, pipe_holo: Pipeline, pipes_type: str,
+            wait: bool = True, collect: bool = False, collect_parallel: bool = False,
+            cleanup: bool = False, cleanup_kwargs: t.Optional[t.Dict] = None) -> t.Tuple[Popen, Popen]:
+        """
+        Call apo and holo ADAPT parallel subprocesses.
+        :param wait: Wait for simulations to finish.
+        :param collect: Collect simulation's results.
+        :param collect_parallel: Use a Pool of two workers to collect the results.
+        :param cleanup: if True will call the `cleanup` method for each of the four pipelines
+        :param cleanup_kwargs: pass these kwargs to the `cleanup` method if `cleanup==True`
+        :return: (apo, holo) Popen objects and (optionally) adapt pipelines
+        """
+        # Spawn ADAPT subprocesses
+        proc = (pipe_apo.run_non_blocking(), pipe_holo.run_non_blocking())
+        if pipes_type not in ['adapt', 'mc']:
+            raise ValueError(f'Incorrect argument `pipes_type` {pipes_type}')
+        if wait:
+            # Wait for ADAPT subprocesses to finish
+            for p in proc:
+                p.communicate()
+        if collect:
+            if not wait:
+                raise ValueError('Must wait for results before collecting.')
+            if pipes_type == 'adapt':
+                self.collect_adapt(parallel=collect_parallel)
+            else:
+                self.collect_mc(parallel=collect_parallel)
+        if cleanup:
+            if not wait:
+                raise ValueError('Must wait for results before cleaning.')
+            if not collect:
+                logging.error(f'AffinityWorker {self.id}: cleaning up the results without their prior collection '
+                              f'means useless run!')
+            cleanup_kwargs = {} if cleanup_kwargs is None else cleanup_kwargs
+            pipe_apo.cleanup(**cleanup_kwargs)
+            pipe_holo.cleanup(**cleanup_kwargs)
+        return proc
+
     def _get_bias_paths(self) -> t.Tuple[t.Optional[str], t.Optional[str]]:
         apo_bias = self.apo_mc_cfg.get_field_value('Bias_Input_File')
         holo_bias = self.holo_mc_cfg.get_field_value('Bias_Input_File') or apo_bias
@@ -597,26 +674,6 @@ class AffinityWorker:
             raise ValueError(f'Every pipe should have the same `Temperature` for the first walker parameter. '
                              f'Got {temps} instead.')
         return float(temps.pop())
-
-    def _transfer_biases(self):
-        def transfer_bias(adapt_pipe: Pipeline, mc_pipe: Pipeline):
-            """
-            Transfers last bias state from the ADAPT simulation into MC experiments directory.
-            Modifies the MC pipeline config accordingly
-            """
-            adapt_cfg = adapt_pipe.mc_conf
-            bias_path = adapt_cfg.get_field_value('Adapt_Output_File')
-            output_period = adapt_cfg.get_field_value('Adapt_Output_Period')
-            n_steps = adapt_cfg.get_field_value('Trajectory_Length')
-            last_step = (n_steps // output_period) * output_period
-            bias = u.get_bias_state(bias_path, last_step)
-            with open(f'{mc_pipe.exp_dir}/{self.default_bias_input_name}', 'w') as f:
-                print(bias.rstrip(), file=f)
-            return None
-
-        transfer_bias(self.apo_adapt_pipe, self.apo_mc_pipe)
-        transfer_bias(self.holo_adapt_pipe, self.holo_mc_pipe)
-        return self.apo_mc_pipe, self.holo_mc_pipe
 
     @staticmethod
     def _collect_res(pipe: Pipeline) -> t.Tuple[PipelineOutput, Pipeline]:

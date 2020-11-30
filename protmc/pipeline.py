@@ -80,7 +80,7 @@ class Pipeline:
     def __init__(
             self, base_mc_conf: config.ProtMCconfig, base_post_conf: t.Optional[config.ProtMCconfig],
             exe_path: str, base_dir: str, exp_dir_name: str, energy_dir: str,
-            active_pos: t.Sequence[int], mut_space_n_types: int = 18):
+            active_pos: t.Sequence[int], mut_space_n_types: int = 18, id_: t.Optional[str] = None):
         """
         :param base_mc_conf: base config for the MC/ADAPT mode
         :param base_post_conf: base config for the POSTPROCESS mode
@@ -113,7 +113,7 @@ class Pipeline:
         self.last_bias_default_name: str = 'ADAPT.last.dat'
         self.ran_setup: bool = False
         self.default_results_dump_name: str = 'RESULTS.tsv'
-        self.id = id(self)
+        self.id = id_ or id(self)
         logging.info(f'Pipeline {self.id}: initialized')
 
     def copy(self):
@@ -152,7 +152,7 @@ class Pipeline:
             n_types, len(self.active_pos),
             [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
 
-    def _store_bias(self) -> None:
+    def store_bias(self) -> None:
         bias_path = self.mc_conf.get_field_value('Adapt_Output_File')
         if bias_path is None:
             return None
@@ -171,7 +171,7 @@ class Pipeline:
                 {'bias': 'sum'}
             ).sort_values('var')
 
-    def _dump_bias(self, path: str):
+    def dump_bias(self, path: str):
         if self.last_bias is None:
             raise ValueError('No last bias to dump')
         dump_bias_df(self.last_bias, path, self.last_bias_step)
@@ -195,7 +195,7 @@ class Pipeline:
             matrix_bb=f'{self.energy_dir}/matrix.bb', active=active,
             steps=int(self.mc_conf.get_field_value('Trajectory_Length')))
         df['exp'] = self.exp_dir_name
-        df['walker'] = n_walker
+        df['walker'] = 0 if n_walker is None else n_walker
 
         # optionally dump the results into the experiment directory
         if dump_results:
@@ -205,16 +205,23 @@ class Pipeline:
 
     def _combine_results(self, new: t.Iterable[pd.DataFrame]):
         def recombine(comb: pd.DataFrame) -> pd.DataFrame:
-            df = comb.groupby('seq').agg({'total_count': 'sum', 'min_energy': 'min', 'max_energy': 'max'})
+            has_walker = 'walker' in comb.columns
+            df = comb.groupby(
+                ['seq', 'walker', 'exp'] if has_walker else ['seq', 'exp'], as_index=False
+            ).agg(
+                {'total_count': 'sum', 'min_energy': 'min', 'max_energy': 'max'}
+            )
             df['seq_prob'] = df['total_count'] / df['total_count'].sum()
             if 'exp' in df.columns:
                 df['exp'] = ';'.join(set(df['exp']))
-            if 'walker' in df.columns:
-                walkers = list(filterfalse(lambda x: x is None, set(df['walker'])))
-                df['walker'] = None if not walkers else ';'.join(map(str, walkers))
-            return df[['seq', 'total_count', 'min_energy', 'max_energy', 'exp', 'walker']]
+            # if 'walker' in df.columns:
+            #     walkers = list(filterfalse(lambda x: x is None, set(df['walker'])))
+            #     df['walker'] = None if not walkers else ';'.join(map(str, walkers))
+            if not has_walker:
+                df['walker'] = None
+            return df[['seq', 'total_count', 'seq_prob', 'min_energy', 'max_energy', 'exp', 'walker']]
 
-        return [recombine(pd.concat([r_old.results, r_new])) for r_old, r_new in zip(self.results, new)]
+        return recombine(pd.concat([self.results.seqs, new]))
 
     def setup(self, mc_config_changes: t.Optional[t.Iterable[t.Tuple[str, t.Any]]] = None, continuation: bool = False):
         """
@@ -261,20 +268,21 @@ class Pipeline:
         (in case of continuing multi-replica or multi-trajectory run)
         :param mc_config_changes: changes passed to the `run` method
         """
+        if not self.ran_setup:
+            logging.warning(f'Pipeline {self.id}: setting up continuation without prior setup run; '
+                            f'are you sure you ran the pipeline?')
         self.exp_dir_name = new_exp_name
         mode = self.mc_conf.mode.field_values[0]
 
         Path(f'{self.base_dir}/{self.exp_dir_name}').mkdir(exist_ok=True, parents=True)
         bias_path = f'{self.base_dir}/{self.exp_dir_name}/{mode}.inp.dat'
         if self.last_bias is None:
-            self._store_bias()
-        self._dump_bias(bias_path)
+            self.store_bias()
+        self.dump_bias(bias_path)
 
-        self.mc_conf['MC_IO']['Bias_Input_File'] = config.ProtMCfield(
-            field_name='Bias_Input_File',
-            field_values=bias_path,
-            comment='Path to a file with existing bias potential'
-        )
+        self.mc_conf.set_field(
+            group_name='MC_IO', field_name='Bias_Input_File', field_values=bias_path,
+            comment='Path to a file with existing bias potential')
         self.setup(mc_config_changes=mc_config_changes, continuation=True)
 
     def run_blocking(self) -> None:
@@ -345,24 +353,24 @@ class Pipeline:
         logging.info(f'Pipeline {self.id}: finished aggregating the results in {finish}s')
 
         # Either add the results to existing ones or store as new
-        if self.results is not None and len(results) == len(self.results):
-            dfs = self._combine_results(results)
+        if self.results is not None:
+            logging.info(f'Pipeline {self.id}: combining results with the previous storage')
+            seqs = self._combine_results(pd.concat(results))
         else:
-            dfs = results
+            seqs = pd.concat(results)
 
         # Concatenate and store the results
-        summaries = pd.DataFrame(compose_summary(x, self.mut_space_size) for x in dfs)
-        # summaries['walker'] = list(range(n_walkers))
-        dfs = pd.concat(dfs)
+        groups = seqs.groupby(['walker', 'exp'] if walker in seqs.columns else ['exp'])
+        summaries = pd.DataFrame(compose_summary(x, self.mut_space_size) for _, x in groups)
+        summaries['walker'] = list(range(n_walkers))
 
         logging.info(f'Pipeline {self.id}: storing the output')
-        # Store bias
-        self._store_bias()
+        self.store_bias()
         if dump_bias and self.last_bias is not None:
-            self._dump_bias(dump_bias_name)
+            self.dump_bias(f'{self.exp_dir}/{dump_bias_name}')
 
         # Store and return the results
-        self.results = PipelineOutput(dfs, summaries)
+        self.results = PipelineOutput(seqs, summaries)
         return self.results, self if return_self else None
 
     def cleanup(self, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), leave_names: t.Tuple[str, ...] = ()):
