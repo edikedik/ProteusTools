@@ -493,6 +493,9 @@ class AffinityWorker:
 
         if run_mc:
             logging.info(f'AffinityWorker {self.id}: running MC pipes')
+            if config_changes is not None:
+                self.apo_mc_pipe.setup(mc_config_changes=config_changes)
+                self.holo_mc_pipe.setup(mc_config_changes=config_changes)
             self._run_pipes(
                 self.apo_mc_pipe, self.holo_mc_pipe, 'mc',
                 wait=True, collect=True, collect_parallel=collect_parallel,
