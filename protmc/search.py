@@ -122,19 +122,22 @@ class AffinitySearch:
                     cleanup_kwargs: t.Optional[t.Dict] = None, overwrite_summaries: bool = False,
                     run_adapt: bool = True, run_mc: bool = True, transfer_bias: bool = True,
                     continue_adapt: bool = False, config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None,
-                    verbose: bool = True) -> pd.DataFrame:
+                    ids: t.Optional[t.Container[str]] = None, verbose: bool = True) -> pd.DataFrame:
         """
         Run each of prepared `AffinityWorkers`.
         :param num_proc: Number of processes.
         :param cleanup: If True, each `Pipeline` within each of `AffinityWorker`s will call its `cleanup` method,
         by default removing `seq` and `ener` files (which can be customized via `cleanup_kwargs` argument.
         :param cleanup_kwargs: Pass this dictionary to `cleanup` method of each `Pipeline`.
-        :param overwrite_summaries:  Overwrite existing `run_summary`, if any.
+        :param overwrite_summaries:  Overwrite existing `run_summaries` of a worker, if any.
+        This is passed to a `run` method of `AffinityWorker`;
+        `summaries` attribute of `AffinitySearch` is overwritten by default.
         :param run_adapt: Run ADAPT mode Pipelines.
         :param run_mc: Run MC mode Pipelines.
         :param transfer_bias: Transfer last ADAPT biases to the MC experiment directories.
         :param continue_adapt: Continue ALF using previously accumulated biases.
         :param config_changes: If `continue_adapt`, apply these changes to `mc_conf` before running.
+        :param ids: IDs of selected workers to run.
         :param verbose: Progress bar.
         :return: A DataFrame of summaries comprising run summary
         for each underlining `Pipeline` within each `AffinityWorker`.
@@ -142,25 +145,38 @@ class AffinitySearch:
         if not self.ran_setup:
             self.setup_workers()
 
-        # Obtain the run results for each of the workers
+        # Prepare for the run
         common_args = dict(
             cleanup=cleanup, cleanup_kwargs=cleanup_kwargs, return_self=True,
             run_adapt=run_adapt, run_mc=run_mc, transfer_bias=transfer_bias,
             continue_adapt=continue_adapt, config_changes=config_changes,
             overwrite_summaries=overwrite_summaries)
-        run_workers = tqdm(self.workers, desc='Running workers') if verbose else self.workers
+        run_workers = self.workers
+        if ids is not None:
+            run_workers = [w for w in run_workers if w.id in ids]
+            logging.info(f'AffinitySearch {self.id}: will run {len(run_workers)} out of {len(self.workers)} workers')
+        if verbose:
+            run_workers = tqdm(run_workers, desc='Running workers')
+
+        # Obtain the run results for each of the workers
         if num_proc > 1:
-            with Pool(num_proc // 2) as workers:
-                results = workers.map(lambda w: w.run(collect_parallel=False, **common_args), run_workers)
+            with Pool(num_proc // 2) as pool:
+                results = pool.map(lambda w: w.run(collect_parallel=False, **common_args), run_workers)
         else:
             results = [w.run(parallel=True, **common_args) for w in run_workers]
 
         # Separate results
         summaries = [r[0] for r in results]
-        self.workers = [r[1] for r in results]
+        new_workers = [r[1] for r in results]
+
+        # Update existing workers
+        workers = {w.id: w for w in self.workers}
+        for w in new_workers:
+            workers[w.id] = w
+        self.workers = list(workers.values())
 
         # Process and return summaries
-        for res, d in zip(summaries, (w.run_dir for w in self.workers)):
+        for res, d in zip(summaries, (w.run_dir for w in new_workers)):
             res['run_dir'] = d
         self.summaries = pd.concat(summaries)
         logging.info(f'AffinitySearch {self.id}: finished running workers')
