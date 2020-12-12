@@ -59,7 +59,8 @@ class AminoAcidDict:
 
     @property
     def proto_mapping(self) -> t.Dict[str, str]:
-        return {'e': 'E', 'd': 'D', 'k': 'K', 'y': 'Y', 'j': 'H', 'h': 'H'}
+        return {'e': 'E', 'd': 'D', 'k': 'K', 'y': 'Y', 'j': 'H', 'h': 'H',
+                'GLH': 'GLU', 'ASH': 'ASP', 'LYN': 'LYS', 'TYD': 'TYR', 'HID': 'HIP', 'HIE': 'HIP'}
 
 
 class NoReferenceError(Exception):

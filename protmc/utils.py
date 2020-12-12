@@ -179,13 +179,31 @@ def adapt_space(pos: t.Union[T, t.Iterable[T]]) -> t.Union[t.List[str], str]:
     return [f'{p1}-{p2}' for p1, p2 in set(combinations(map(str, pos), 2))]
 
 
-def infer_mut_space(mut_space_n_types: int, num_active: int, constraints: t.Optional[t.List[str]]):
+def infer_mut_space(
+        mut_space_n_types: int, num_active: int,
+        constraints: t.Optional[t.List[str]],
+        merge_proto: bool = True) -> int:
+    """
+    Calculate mutation space size.
+    :param mut_space_n_types: Number of types available in the initial mutation space.
+    :param num_active: Number of active positions.
+    :param constraints: Existing `Space_Constraints`
+    :param merge_proto: Merge protonation states of `Space_Constraints`.
+    It must be done if `mut_space_n_types` excludes protonation states,
+    and must not be done otherwise.
+    :return:
+    """
     num_mut = [mut_space_n_types] * num_active
+    proto_mapping = AminoAcidDict().proto_mapping
     if constraints:
         if len(constraints) > num_active:
             raise ValueError('More constrained positions than active ones')
         for i, c in enumerate(constraints):
-            num_mut[i] = len(c.split()[1:])
+            aas = c.split()[1:]
+            if merge_proto:
+                num_mut[i] = len(set(proto_mapping[x] if x in proto_mapping else x for x in aas))
+            else:
+                num_mut[i] = len(aas)
     return reduce(op.mul, num_mut)
 
 

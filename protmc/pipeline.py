@@ -100,7 +100,7 @@ class Pipeline:
         self.energy_dir: str = energy_dir
         self.mut_space_n_types = mut_space_n_types
         self.active_pos = self._infer_active(active_pos, base_mc_conf)
-        self.mut_space_size = self._infer_mut_space(mut_space_n_types, base_mc_conf)
+        self.mut_space_size: t.Optional[int] = None
         self.mc_conf: t.Optional[config.ProtMCconfig] = None
         self.post_conf: t.Optional[config.ProtMCconfig] = None
         self.exp_dir: t.Optional[str] = None
@@ -132,7 +132,7 @@ class Pipeline:
             conf.change_field(f_name, f_value)
 
     @staticmethod
-    def _infer_active(active: t.Optional, conf: config.ProtMCconfig):
+    def _infer_active(active: t.Optional, conf: config.ProtMCconfig) -> t.Optional[t.List[int]]:
         """
         Attempt to infer active positions (from Adapt_Space, if exists)
         :return:
@@ -146,10 +146,16 @@ class Pipeline:
                     chain.from_iterable(x.split('-') for x in space))]
         return active
 
-    def _infer_mut_space(self, n_types, conf: config.ProtMCconfig):
+    def infer_mut_space(self, conf: t.Optional[config.ProtMCconfig] = None):
+        if conf is None:
+            conf = self.mc_conf
         existing_constraints = conf.get_field_value('Space_Constraints')
+        existing_constraints = (
+            [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
+        if existing_constraints is not None:
+            existing_constraints = [c for c in existing_constraints if int(c.split()[0]) in self.active_pos]
         return infer_mut_space(
-            n_types, len(self.active_pos),
+            self.mut_space_n_types, len(self.active_pos),
             [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
 
     def store_bias(self) -> None:
@@ -176,15 +182,11 @@ class Pipeline:
             raise ValueError('No last bias to dump')
         dump_bias_df(self.last_bias, path, self.last_bias_step)
 
-    def _agg_walker(
-            self, active, dump_results: bool = True, dump_name: t.Optional[str] = None,
-            n_walker: t.Optional[int] = None) -> pd.DataFrame:
+    def _agg_walker(self, active, n_walker: t.Optional[int] = None) -> pd.DataFrame:
         """
         The function exists to aggregate a single walker. It basically handles the suffixes [_0, _1, ...]
             protMC assigns depending on the number of trajectories (or replicas).
         :param active: active positions
-        :param dump_results: dump results or not
-        :param dump_name: file name to dump results
         :param n_walker: walker number -- can be either empty string or "0", "1" and so on.
         :return: DataFrame of aggregation results
         """
@@ -196,10 +198,6 @@ class Pipeline:
             steps=int(self.mc_conf.get_field_value('Trajectory_Length')))
         df['exp'] = self.exp_dir_name
         df['walker'] = 0 if n_walker is None else n_walker
-
-        # optionally dump the results into the experiment directory
-        if dump_results:
-            df.to_csv(f'{self.base_dir}/{self.exp_dir_name}/{dump_name}' + n_walker, sep='\t', index=False)
 
         return df
 
@@ -252,7 +250,7 @@ class Pipeline:
 
         # re-infer active positions and mutation space size from the new config
         self.active_pos = self._infer_active(self.active_pos, self.mc_conf)
-        self.mut_space_size = self._infer_mut_space(self.mut_space_n_types, self.mc_conf)
+        self.mut_space_size = self.infer_mut_space()
 
         # flip the flag on
         self.ran_setup = True
@@ -338,19 +336,42 @@ class Pipeline:
 
         # aggregate the results
         start = time()
+        seqs = self.collect_seqs(parallel=parallel, walker=walker, n_walkers=n_walkers, overwrite=False)
+        finish = time() - start
+        logging.info(f'Pipeline {self.id}: finished aggregating the results in {finish}s')
+
+        # Compose summary
+        summaries = self.collect_summary(seqs=seqs, n_walkers=n_walkers, overwrite=False)
+
+        self.store_bias()
+        if dump_bias and self.last_bias is not None:
+            path = f'{self.exp_dir}/{dump_bias_name}'
+            logging.info(f'Pipeline {self.id}: storing the last bias to {path}')
+            self.dump_bias(path)
+
+        # optionally dump the results into the experiment directory
+        if dump_results:
+            path = f'{self.base_dir}/{self.exp_dir_name}/{dump_name}'
+            logging.info(f'Pipeline {self.id}: storing the last bias to {path}')
+            seqs.to_csv(path, sep='\t', index=False)
+
+        # Store and return the results
+        self.results = PipelineOutput(seqs, summaries)
+        return self.results, self if return_self else None
+
+    def collect_seqs(self, parallel: bool = False, walker: t.Optional[int] = None,
+                     n_walkers: int = 0, overwrite: bool = True) -> pd.DataFrame:
         if parallel and walker is None and n_walkers > 1:
             with Pool(n_walkers) as pool:
                 results = pool.map(
-                    lambda n: self._agg_walker(self.active_pos, dump_results, dump_name, n),
+                    lambda n: self._agg_walker(self.active_pos, n),
                     range(n_walkers))
         elif not parallel and n_walkers > 1:
             results = [
-                self._agg_walker(self.active_pos, dump_results, dump_name, n)
+                self._agg_walker(self.active_pos, n)
                 for n in range(n_walkers) if (walker is None or n == walker)]
         else:
-            results = [self._agg_walker(self.active_pos, dump_results, dump_name)]
-        finish = time() - start
-        logging.info(f'Pipeline {self.id}: finished aggregating the results in {finish}s')
+            results = [self._agg_walker(self.active_pos)]
 
         # Either add the results to existing ones or store as new
         if self.results is not None:
@@ -358,20 +379,19 @@ class Pipeline:
             seqs = self._combine_results(pd.concat(results))
         else:
             seqs = pd.concat(results)
+        if overwrite and self.results is not None:
+            self.results = PipelineOutput(seqs, self.results.summary)
+        return seqs
 
-        # Concatenate and store the results
-        groups = seqs.groupby(['walker', 'exp'] if walker in seqs.columns else ['exp'])
-        summaries = pd.DataFrame(compose_summary(x, self.mut_space_size) for _, x in groups)
-        summaries['walker'] = list(range(n_walkers))
-
-        logging.info(f'Pipeline {self.id}: storing the output')
-        self.store_bias()
-        if dump_bias and self.last_bias is not None:
-            self.dump_bias(f'{self.exp_dir}/{dump_bias_name}')
-
-        # Store and return the results
-        self.results = PipelineOutput(seqs, summaries)
-        return self.results, self if return_self else None
+    def collect_summary(self, seqs: pd.DataFrame, n_walkers: int = 0, overwrite: bool = True) -> pd.DataFrame:
+        mut_space_size = self.infer_mut_space()
+        groups = seqs.groupby(['walker', 'exp'] if 'walker' in seqs.columns else ['exp'])
+        summaries = pd.DataFrame(compose_summary(x, mut_space_size) for _, x in groups)
+        if n_walkers:
+            summaries['walker'] = list(range(n_walkers))
+        if overwrite and self.results is not None:
+            self.results = PipelineOutput(self.results.seqs, summaries)
+        return summaries
 
     def cleanup(self, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), leave_names: t.Tuple[str, ...] = ()):
         files = glob(f'{self.exp_dir}/*')
