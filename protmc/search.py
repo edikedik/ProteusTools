@@ -126,7 +126,7 @@ class AffinitySearch:
             run_adapt: bool = True, run_mc: bool = True, transfer_bias: bool = True,
             continue_adapt: bool = False, config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None,
             ids: t.Optional[t.Container[str]] = None,
-            impose_bias_constraints: bool = False,
+            bias_constraints: bool = False,
             bias_constraints_holo_based: bool = True,
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
             bias_constraints_threshold: float = 10,
@@ -146,7 +146,7 @@ class AffinitySearch:
         :param transfer_bias: Transfer last ADAPT biases to the MC experiment directories.
         :param continue_adapt: Continue ALF using previously accumulated biases.
         :param config_changes: If `continue_adapt`, apply these changes to `mc_conf` before running.
-        :param impose_bias_constraints: See `AffinityWorker.run` docs for details.
+        :param bias_constraints: See `AffinityWorker.run` docs for details.
         :param bias_constraints_holo_based: See `AffinityWorker.run` docs for details.
         :param bias_constraints_mut_space: See `AffinityWorker.run` docs for details.
         :param bias_constraints_threshold: See `AffinityWorker.run` docs for details.
@@ -167,7 +167,7 @@ class AffinitySearch:
             run_adapt=run_adapt, run_mc=run_mc, transfer_bias=transfer_bias,
             continue_adapt=continue_adapt, config_changes=config_changes,
             overwrite_summaries=overwrite_summaries,
-            impose_bias_constraints=impose_bias_constraints,
+            bias_constraints=bias_constraints,
             bias_constraints_holo_based=bias_constraints_holo_based,
             bias_constraints_mut_space=mut_space,
             bias_constraints_threshold=bias_constraints_threshold,
@@ -446,6 +446,7 @@ class AffinityWorker:
         self.affinity: t.Optional[pd.DataFrame] = None
         self.stability: t.Optional[pd.DataFrame] = None
         self.ref_seq: str = ref_seq
+        self.ref_seq_subset: str = "".join([self.ref_seq[v] for v in self.active_subset_mapped.values()])
         self._default_bias_input_name = 'ADAPT.inp.dat'
         self.id = id_ or id(self)
         logging.info(f'AffinityWorker {self.id}: initialized')
@@ -504,7 +505,7 @@ class AffinityWorker:
             run_adapt: bool = True, run_mc: bool = True, transfer_bias: bool = True,
             continue_adapt: bool = False, config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None,
             return_self: bool = True, filter_results_by_constraints: bool = True,
-            impose_bias_constraints: bool = False,
+            bias_constraints: bool = False,
             bias_constraints_holo_based: bool = True,
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
             bias_constraints_threshold: float = 10,
@@ -524,7 +525,7 @@ class AffinityWorker:
         :param config_changes: If `continue_adapt`, apply these changes to `mc_conf` before running.
         :param return_self: Whether to return `self` (useful for CPU-parallelization)
         :param filter_results_by_constraints:
-        :param impose_bias_constraints: Whether to impose constraints of a mutation space based on previous bias.
+        :param bias_constraints: Whether to impose constraints of a mutation space based on previous bias.
         If `True`, types having bias values above the threshold will be excluded from the mutation space.
         If there are existing constraints in either of the `ADAPT` configs, they will be merged
         and concatenated with the bias-derived constraints.
@@ -550,25 +551,25 @@ class AffinityWorker:
             wait=True, collect=True, collect_parallel=collect_parallel,
             cleanup=cleanup, cleanup_kwargs=cleanup_kwargs)
 
+        if continue_adapt:
+            f'AffinityWorker {self.id}: setting up ADAPT continuation'
+            self.apo_adapt_pipe.setup_continuation(
+                new_exp_name=self.apo_adapt_pipe.exp_dir_name,
+                mc_config_changes=config_changes)
+            self.holo_adapt_pipe.setup_continuation(
+                new_exp_name=self.holo_adapt_pipe.exp_dir_name,
+                mc_config_changes=config_changes)
+        if bias_constraints:
+            if not bias_constraints_mut_space:
+                raise ValueError('Provide mutation space to use bias-based constraints')
+            logging.info(f'AffinityWorker {self.id}: Constraining {bias_constraints_apply_to} pipelines '
+                         f'based on previous bias')
+            self.bias_based_constraints(
+                mut_space=bias_constraints_mut_space,
+                bias_threshold=bias_constraints_threshold,
+                holo_based=bias_constraints_holo_based,
+                apply_to=bias_constraints_apply_to)
         if run_adapt or continue_adapt:
-            if continue_adapt:
-                f'AffinityWorker {self.id}: setting up ADAPT continuation'
-                self.apo_adapt_pipe.setup_continuation(
-                    new_exp_name=self.apo_adapt_pipe.exp_dir_name,
-                    mc_config_changes=config_changes)
-                self.holo_adapt_pipe.setup_continuation(
-                    new_exp_name=self.holo_adapt_pipe.exp_dir_name,
-                    mc_config_changes=config_changes)
-            if impose_bias_constraints:
-                if not bias_constraints_mut_space:
-                    raise ValueError('Provide mutation space to use bias-based constraints')
-                logging.info(f'AffinityWorker {self.id}: Constraining {bias_constraints_apply_to} pipelines '
-                             f'based on previous bias')
-                self.bias_based_constraints(
-                    mut_space=bias_constraints_mut_space,
-                    bias_threshold=bias_constraints_threshold,
-                    holo_based=bias_constraints_holo_based,
-                    apply_to=bias_constraints_apply_to)
             logging.info(f'AffinityWorker {self.id}: running ADAPT pipes')
             self._run_pipes(self.apo_adapt_pipe, self.holo_adapt_pipe, 'adapt', **run_common_args)
 
@@ -706,9 +707,9 @@ class AffinityWorker:
             self, mut_space: t.Union[t.Set[str], str],
             bias_threshold: float = 10, holo_based: bool = True,
             apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc')) -> t.List[str]:
-        pipes = list(
+        pipes: t.List[Pipeline] = list(
             map(
-                op.itemgetter(1),
+                lambda y: y[1],
                 filter(
                     lambda x: x[0] in apply_to,
                     (('apo_adapt', self.apo_adapt_pipe),
@@ -722,9 +723,24 @@ class AffinityWorker:
             raise ValueError(f'AffinityWorker {self.id}: no pipes to apply to')
         existing = u.extract_constraints([p.mc_conf for p in pipes])
         pipe = self.holo_adapt_pipe if holo_based else self.apo_adapt_pipe
-        bias = pipe.last_bias
-        if bias is None:
+
+        if pipe.last_bias is None:
             raise ValueError(f'There is no bias accumulated for the Pipe {pipe.id}')
+        bias = pipe.last_bias.copy()
+        aa_mapping = AminoAcidDict().aa_dict
+        bias['seq'] = bias['var'].apply(lambda x: "".join(
+            [aa_mapping[x.split('-')[1]], aa_mapping[x.split('-')[3]]]
+        ))
+        if len(self.ref_seq_subset) == 1:
+            ref = self.ref_seq_subset * 2
+        elif len(self.ref_seq_subset) == 2:
+            ref = self.ref_seq_subset
+        else:
+            raise NotImplemented('Not implemented for reference sequences larger than two')
+        sub = bias[bias['seq'] == ref]
+        if len(sub) != 1:
+            raise RuntimeError(f'Ambiguous results of finding reference sequence in the last bias of {pipe.id}')
+        bias['bias'] -= sub['bias'].iloc[0]
         if isinstance(mut_space, str):
             if not Path(mut_space).exists():
                 raise ValueError(f'Invalid mut space path {mut_space}')
