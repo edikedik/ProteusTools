@@ -11,12 +11,12 @@ import pandas as pd
 from multiprocess.pool import Pool
 from tqdm import tqdm
 
-from protmc import config
-from protmc import utils as u
-from protmc.affinity import affinity
-from protmc.base import NoReferenceError, AminoAcidDict
-from protmc.pipeline import Pipeline, PipelineOutput
-from protmc.stability import stability
+from protmc.basic import config
+from protmc.common import utils as u
+from protmc.basic.affinity import affinity
+from protmc.common.base import NoReferenceError, AminoAcidDict
+from protmc.basic.pipeline import Pipeline, PipelineOutput
+from protmc.basic.stability import stability
 
 WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
 
@@ -182,7 +182,7 @@ class AffinitySearch:
         # Obtain the run results for each of the workers
         if num_proc > 1:
             with Pool(num_proc // 2) as pool:
-                results = pool.map(lambda w: w.run(collect_parallel=False, **common_args), workers)
+                results = pool.map(lambda w: w.run(collect_parallel=False, **common_args), workers, chunksize=1)
         else:
             results = [w.run(collect_parallel=True, **common_args) for w in workers]
 

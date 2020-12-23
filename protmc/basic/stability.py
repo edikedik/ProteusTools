@@ -4,9 +4,9 @@ from math import log
 
 import pandas as pd
 
-from protmc.base import AminoAcidDict, AA_pair, NoReferenceError
-from protmc.parsers import parse_bias, parse_ref_energies, parse_population_df
-from protmc.utils import compute_bias_energy
+from protmc.common.base import AminoAcidDict, AA_pair, NoReferenceError
+from protmc.common.parsers import parse_bias, parse_ref_energies, parse_population_df
+from protmc.common.utils import compute_bias_energy
 
 
 def stability(

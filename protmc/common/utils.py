@@ -11,8 +11,8 @@ import biotite.structure.io as io
 import numpy as np
 import pandas as pd
 
-from protmc.base import AminoAcidDict, AA_pair
-from protmc.parsers import bias_to_df, get_bias_state
+from protmc.common.base import AminoAcidDict, AA_pair
+from protmc.common.parsers import bias_to_df, get_bias_state
 
 T = t.TypeVar('T')
 

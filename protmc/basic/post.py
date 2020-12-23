@@ -7,8 +7,8 @@ from itertools import islice, takewhile, starmap, count, groupby
 import pandas as pd
 from tqdm import tqdm
 
-from protmc.base import Summary, ParsedEntry
-from protmc.utils import count_sequences
+from protmc.common.base import Summary, ParsedEntry
+from protmc.common.utils import count_sequences
 
 
 def analyze_seq(

@@ -12,12 +12,12 @@ from time import time
 import pandas as pd
 from multiprocess.pool import Pool
 
-from protmc import config
-from protmc.base import PipelineOutput
-from protmc.parsers import dump_bias_df
-from protmc.post import analyze_seq_no_rich, compose_summary
-from protmc.runner import Runner
-from protmc.utils import get_bias_state, bias_to_df, infer_mut_space
+from protmc.basic import config
+from protmc.common.base import PipelineOutput
+from protmc.common.parsers import dump_bias_df
+from protmc.basic.post import analyze_seq_no_rich, compose_summary
+from protmc.basic.runner import Runner
+from protmc.common.utils import get_bias_state, bias_to_df, infer_mut_space
 
 
 def setup_exp_dir(base_dir: str, name: str) -> str:

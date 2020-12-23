@@ -5,7 +5,7 @@ from itertools import dropwhile, takewhile, groupby, chain
 
 import pandas as pd
 
-from protmc.base import PairBias, AA_pair, Population_element
+from protmc.common.base import PairBias, AA_pair, Population_element
 
 
 def parse_ref_energies(path: str) -> t.Dict[str, float]:
@@ -130,3 +130,7 @@ def tail(filename: str, n: int) -> str:
     if res.stderr:
         raise ValueError(f'Failed with an error {res.stderr}')
     return res.stdout
+
+
+if __name__ == '__main__':
+    raise RuntimeError

@@ -4,7 +4,7 @@ from setuptools import find_packages
 
 setup(
     name='ProteusTools',
-    version='0.1dev1',
+    version='0.1dev2',
     author='Ivan Reveguk',
     packages=find_packages(),
     install_requires=[
@@ -16,7 +16,4 @@ setup(
         'numpy>=1.19.1',
         'biotite>=0.24'
     ],
-    #scripts=[
-        #'affinity.py'
-    #]
 )

@@ -2,7 +2,7 @@ import subprocess as sp
 import typing as t
 from pathlib import Path
 
-from protmc.config import ProtMCconfig
+from protmc.basic.config import ProtMCconfig
 
 
 class Runner:

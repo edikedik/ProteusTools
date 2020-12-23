@@ -7,9 +7,9 @@ from math import log
 import click
 import pandas as pd
 
-from protmc.base import AminoAcidDict, AA_pair, AffinityResult, NoReferenceError
-from protmc.parsers import parse_population, parse_population_df, parse_bias
-from protmc.utils import compute_bias_energy
+from protmc.common.base import AminoAcidDict, AA_pair, AffinityResult, NoReferenceError
+from protmc.common.parsers import parse_population, parse_population_df, parse_bias
+from protmc.common.utils import compute_bias_energy
 
 
 def energy(
@@ -91,39 +91,5 @@ def affinity(
     return pd.DataFrame([AffinityResult(s, energy_(sequence=s) - e_ref) for s in common_ub])
 
 
-@click.command()
-@click.argument('pop_unbound', type=click.Path(dir_okay=False, file_okay=True, exists=True))
-@click.argument('pop_bound', type=click.Path(dir_okay=False, file_okay=True, exists=True))
-@click.option('-bu', '--bias_unbound', type=click.Path(dir_okay=False, file_okay=True, exists=True), required=True,
-              help='Path to the bias values for the "unbound" state.')
-@click.option('-bb', '--bias_bound', type=click.Path(dir_okay=False, file_okay=True, exists=True), required=True,
-              help='Path to the bias values for the "bound" state.')
-@click.option('-kT', '--temperature', required=True, help='Temperature of the simulation (kT)')
-@click.option('-t', '--threshold', default=100, show_default=True, help='Minimum sequence count.')
-@click.option('-p', '--positions', required=True, help='Comma-separated list of positions.')
-@click.option('-o', '--output', type=click.File('w'), default=sys.stdout,
-              help='Path to an output file. If not provided, the program will print to stdout.')
-def _affinity(pop_unbound, pop_bound, bias_unbound, bias_bound, temperature, threshold, positions, output):
-    """
-    Command calculates relative affinities of the sequences using biased populations (proteus.dat files)
-    in bound and unbound states.
-    # TODO: move this interface to the root ./proteus.py (does not work for now)
-    It accepts paths to POP_UNBOUND and POP_BOUND as positional arguments, and the rest is customized via options.
-
-    """
-    # Validate options
-    positions = positions.split(',')
-    if not positions:
-        raise click.BadOptionUsage('positions', f'Failed to parse positions.')
-
-    # Get the results
-    results = affinity(pop_unbound, pop_bound, bias_unbound, bias_bound, temperature, threshold, positions)
-
-    # Echo the results
-    click.echo(f">HEADER|kT:{temperature}|threshold:{threshold}", file=output)
-    for seq, aff in sorted(results, key=op.itemgetter(1)):
-        click.echo("{:s} {:<10.3f}".format(seq, aff), file=output)
-
-
 if __name__ == '__main__':
-    _affinity()
+    raise RuntimeError
