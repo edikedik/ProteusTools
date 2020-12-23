@@ -145,7 +145,7 @@ class ProtMCconfig(MutableMapping):
                 if f_name == field_name:
                     self._store[g_name][f_name] = field_values
 
-    def set_field(self, group_name:str, field_name: str, field_values: _Values, comment: t.Optional[str] = None):
+    def set_field(self, group_name: str, field_name: str, field_values: _Values, comment: t.Optional[str] = None):
         if group_name not in self._store:
             raise ValueError(f'No group with {group_name} is present in config')
         self._store[group_name][field_name] = ProtMCfield(
@@ -280,6 +280,26 @@ def rm_defaults(group: ProtMCfieldGroup) -> ProtMCfieldGroup:
     return ProtMCfieldGroup(
         group_name=group.group_name,
         group_fields=[f for f in group.values() if f.is_default])
+
+
+def change_field_all(configs: t.Iterable[ProtMCconfig], field_name: str, field_value: _Value):
+    """
+    Helper function to apply the same changes to a group of configs
+    """
+    for c in configs:
+        c.change_field(field_name, field_value)
+    return
+
+
+def set_field_all(
+        configs: t.Iterable[ProtMCconfig], group_name: str, field_name: str,
+        field_values: _Value, field_comment: t.Optional[str] = None):
+    """
+    Helper function to set the same field with the same values for all of the configs
+    """
+    for c in configs:
+        c.set_field(group_name, field_name, field_values, field_comment)
+    return
 
 
 def load_default_config(mode: str):
