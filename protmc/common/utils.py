@@ -207,5 +207,21 @@ def infer_mut_space(
     return reduce(op.mul, num_mut)
 
 
+def scale(data: t.Union[t.List[float], np.ndarray], a: float, b: float) -> t.List[float]:
+    """
+    Linearly scale data between a and b
+    :param data: Either a list of numbers or a numpy array
+    :param a: lower bound
+    :param b: upper bound
+    :return: scaled data
+    """
+    min_, max_ = min(data), max(data)
+
+    def _scale(x):
+        return (b - a) * (x - min_) / (max_ - min_) + a
+
+    return _scale(data) if isinstance(data, np.ndarray) else [_scale(x) for x in data]
+
+
 if __name__ == '__main__':
     raise RuntimeError()
