@@ -13,13 +13,13 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Linux",
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.8',
     packages=find_packages(),
     # TODO: verify packages' versions
     install_requires=[
         'ray',
         'genetic',
-        'numba==0.51.2',
+        'numba',
         'click>=7.1.2',
         'pandas>=1.1.3',
         'tqdm>=4.50.2',
