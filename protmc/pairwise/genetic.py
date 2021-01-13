@@ -165,6 +165,7 @@ class RichIndividual:
         self.genes = parsing_results.GenePool.remap_idx(genes_idx)
         self.graph = self._as_graph()
         self.stats = self._create_stats(score_fn, parsing_results.Positions, parsing_results.Types)
+        self.mut_space = self._mutation_space(parsing_results)
 
     def _as_graph(self) -> nx.Graph:
         g = nx.Graph()
@@ -197,6 +198,17 @@ class RichIndividual:
             CCMeanEdgeScore=float(np.mean(scores)),
             CCRawScore=sum(scores)
         )
+
+    def _mutation_space(self, parsing_results: ParsingResults):
+        ts1, ts2 = parsing_results.Types.fst, parsing_results.Types.snd
+        ps1, ps2 = parsing_results.Positions.fst, parsing_results.Positions.snd
+        i_ts = np.hstack((ts1[self.genes_idx], ts2[self.genes_idx]))
+        i_ps = np.hstack((ps1[self.genes_idx], ps2[self.genes_idx]))
+        masks = [i_ps == u for u in np.unique(i_ps)]
+        i_ts_masked = [i_ts[m] for m in masks]
+        types = [[parsing_results.Types.map_rev[i] for i in np.unique(x)]
+                 for x in i_ts_masked]
+        return list(zip(np.unique(i_ps), types))
 
 
 def prepare_df(params: ParsingParams) -> pd.DataFrame:
