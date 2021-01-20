@@ -121,6 +121,7 @@ class ParsingParams:
     `Results_columns`: A `Columns` namedtuple, holding column names for
     'affinity', 'stability', 'position', 'sequence', and 'sequence subset'.
     `Affinity_bounds`: A `Bounds` namedtuple holding lower and upper bounds for affinity (both can be `None`).
+    `Affinity_cap`: ...
     `Stability_bounds`: A `Bounds` namedtuple holding lower and upper bounds for stability (both can be `None`).
     `Scale_range`: A `Bounds` namedtuple holding lower and upper bounds to scale affinity values.
     After the scaling, we refer to these as "scores".
@@ -129,6 +130,7 @@ class ParsingParams:
     Results_path: str
     Results_columns: Columns = Columns('affinity', 'stability', 'pos', 'seq', 'seq_subset')
     Affinity_bounds: Bounds = Bounds(None, None)
+    Affinity_cap: Bounds = Bounds(None, None)
     Stability_bounds: Bounds = Bounds(None, None)
     Scale_range: Bounds = Bounds(0, 1)
     Reverse_score: bool = True
@@ -158,10 +160,9 @@ class ParsingResults:
 
 
 class RichIndividual:
-    def __init__(self, genes_idx: np.ndarray, record: Record, parsing_results: ParsingResults,
+    def __init__(self, genes_idx: np.ndarray, parsing_results: ParsingResults,
                  score_fn: t.Callable[[np.ndarray], float]):
         self.genes_idx = genes_idx
-        self.record = record
         self.genes = parsing_results.GenePool.remap_idx(genes_idx)
         self.graph = self._as_graph()
         self.stats = self._create_stats(score_fn, parsing_results.Positions, parsing_results.Types)
@@ -227,18 +228,25 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
     cols = params.Results_columns
     # Filter by bounds
     idx = np.ones(len(df)).astype(bool)
-    if params.Affinity_bounds.lower:
+    if params.Affinity_bounds.lower is not None:
         idx &= df[cols.affinity] > params.Affinity_bounds.lower
-    if params.Affinity_bounds.upper:
+    if params.Affinity_bounds.upper is not None:
         idx &= df[cols.affinity] < params.Affinity_bounds.upper
-    if params.Stability_bounds.lower:
+    if params.Stability_bounds.lower is not None:
         idx &= df[cols.stability] > params.Stability_bounds.lower
-    if params.Stability_bounds.upper:
+    if params.Stability_bounds.upper is not None:
         idx &= df[cols.stability] < params.Stability_bounds.upper
     df = df[idx]
 
     # Filter pairs
     df = df[df[cols.pos].apply(lambda p: len(set(p.split('-'))) == 2)]
+
+    # Cap affinity at certain values
+    l, h = params.Affinity_cap
+    if l is not None:
+        df.loc[df[cols.affinity] < l, cols.affinity] = l
+    if h is not None:
+        df.loc[df[cols.affinity] > h, cols.affinity] = h
 
     # Convert scores
     scores = np.array(df[cols.affinity])
@@ -552,6 +560,10 @@ class ChoiceMutator(Mutator):
         return [f(indiv) for f, indiv in zip(mutators, individuals)]
 
 
+class NoPopulations(Exception):
+    pass
+
+
 class Genetic:
     """
     Class uses `ParsingResults` returned by `prepare_data` and `GeneticParams` instance to setup
@@ -639,13 +651,40 @@ class Genetic:
 
     def flatten(self):
         if self.populations is None:
-            raise ValueError('...')
+            raise NoPopulations
         return (list(chain.from_iterable(self.populations)),
                 list(chain.from_iterable(self.records)) if self.records else [None] * len(self.populations))
 
+    def select_n_best(self, n: int, overwrite: bool = True):
+        """
+        Selects `n` best individuals per population based on the score function value.
+        :param n: Number of individuals to take per population.
+        :param overwrite: Overwrite current population with the selection.
+        :return: A top-n selection.
+        """
+
+        def sel_population(pop, recs):
+            if recs is None:
+                recs = [None] * len(pop)
+            sel = sorted(zip(pop, recs), key=lambda x: self.score_func(x[0]), reverse=True)
+            return [sel[i][0] for i in range(n)], [sel[i][1] for i in range(n)]
+
+        if self.populations is None:
+            raise NoPopulations
+
+        records = [None] * len(self.populations) if self.records is None else self.records
+
+        selections = [sel_population(p, r) for p, r in zip(self.populations, records)]
+        populations, records = [x[0] for x in selections], [x[1] for x in selections]
+        if self.records is None:
+            records = None
+        if overwrite:
+            self.populations, self.records = populations, records
+        return populations, records
+
     def dump(self, path: str = './genetic_results.joblib', compress: int = 3) -> str:
         if self.populations is None:
-            raise ValueError('No populations to dump')
+            raise NoPopulations
         recs = self.records or [None] * len(self.populations)
         return joblib.dump((self.populations, recs), path, compress)[0]
 
@@ -662,6 +701,8 @@ class Genetic:
         (where each population is a list of individuals, i.e. numpy arrays),
         and (2) a list with lists of individuals' records.
         """
+        if self.populations is None:
+            raise NoPopulations
         data_to_evolve = zip(self.populations, self.records or [None] * len(self.populations))
         if verbose:
             data_to_evolve = tqdm(data_to_evolve, desc='Evolving population: ', total=len(self.populations))
