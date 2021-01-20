@@ -19,6 +19,8 @@ from protmc.basic.pipeline import Pipeline, PipelineOutput
 from protmc.basic.stability import stability
 
 WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
+ConfigSet = t.Dict[str, t.List[t.Tuple[str, str, t.Any]]]
+ConfigChange = t.Dict[str, t.List[t.Tuple[str, t.Any]]]
 
 
 class AffinitySearch:
@@ -110,12 +112,27 @@ class AffinitySearch:
         self.id = id(self) if id_ is None else id_
         logging.info(f'AffinitySearch {self.id}: initialized')
 
-    def setup_workers(self) -> None:
+    def setup_workers(self, dir_names: t.Optional[t.List[str]] = None,
+                      change_fields: t.Optional[t.List[ConfigChange]] = None,
+                      set_fields: t.Optional[t.List[ConfigSet]] = None) -> None:
         """
         Setup `AffinityWorker`'s based on subsets of active positions.
         Will populate the `workers` attribute with prepared `AffinityWorker` instances.
         """
-        workers = [self._setup_worker(active_subset=s) for s in self.positions]
+
+        def prep_param(param_name, param):
+            if param is not None:
+                if len(param) != len(self.positions):
+                    raise ValueError(f'{param_name} length ({len(param)}) does not match '
+                                     f'the number of workers ({len(self.positions)})')
+                return param
+            return [None] * len(self.positions)
+
+        dir_names = prep_param('dir_names', dir_names)
+        change_fields = prep_param('change_fields', change_fields)
+        set_fields = prep_param('set_fields', set_fields)
+
+        workers = [self._setup_worker(*x) for x in zip(self.positions, dir_names, change_fields, set_fields)]
         self.workers = {w.id: w for w in workers}
         self.ran_setup = True
         logging.info(f'AffinitySearch {self.id}: ran setup for workers')
@@ -328,7 +345,10 @@ class AffinitySearch:
         # otherwise, concatenate and return the results
         return pd.concat(filtered)
 
-    def _setup_worker(self, active_subset: t.Union[t.List[int], int]) -> 'AffinityWorker':
+    def _setup_worker(self, active_subset: t.Union[t.List[int], int],
+                      exp_dir_name: t.Optional[str] = None,
+                      change_fields: t.Optional[ConfigChange] = None,
+                      set_fields: t.Optional[ConfigSet] = None) -> 'AffinityWorker':
         """
         Helper function setting up an AffinityWorker based on a subset of active positions
         :param active_subset: A subset of active positions (can be a single value or a list of values)
@@ -345,7 +365,9 @@ class AffinitySearch:
             mutation_space=self.mut_space_path,
             existing_constraints=existing_constraints or None)
         adapt_space = u.adapt_space(active_subset)
-        exp_dir_name = "-".join(map(str, active_subset)) if isinstance(active_subset, t.Iterable) else active_subset
+        if exp_dir_name is None:
+            exp_dir_name = ("-".join(map(str, active_subset)) if isinstance(active_subset, t.Iterable)
+                            else active_subset)
 
         # put varying parameters into configs
         apo_adapt_cfg.set_field('ADAPT_PARAMS', 'Adapt_Space', adapt_space)
@@ -365,7 +387,7 @@ class AffinitySearch:
             adapt_dir_name=self.adapt_dir_name, mc_dir_name=self.mc_dir_name,
             apo_dir_name=self.apo_dir_name, holo_dir_name=self.holo_dir_name,
             temperature=self.temperature, id_=exp_dir_name)
-        worker.setup()
+        worker.setup(change_fields=change_fields, set_fields=set_fields)
         return worker
 
     def _infer_ref_seq(self):
@@ -398,6 +420,7 @@ class AffinityWorker:
     and `mc holo` `Pipeline`s, and runs these `Pipelines` in parallel.
     It does (or can do) a lot of things behind the scenes: see `run` documentation for details.
     """
+
     def __init__(
             self, apo_setup: WorkerSetup, holo_setup: WorkerSetup,
             active_pos: t.Iterable[int], active_subset_mapped: t.Dict[int, int],
@@ -451,7 +474,7 @@ class AffinityWorker:
         self.id = id_ or id(self)
         logging.info(f'AffinityWorker {self.id}: initialized')
 
-    def setup(self) -> None:
+    def setup(self, change_fields: t.Optional[ConfigChange] = None, set_fields: t.Optional[ConfigSet] = None) -> None:
         def create_pipe(cfg, base_dir, exp_dir, energy_dir, id_):
             # Simplifies the creation of Pipeline by encapsulating common arguments
             return Pipeline(
@@ -481,9 +504,29 @@ class AffinityWorker:
         self.holo_mc_pipe = create_pipe(
             cfg=self.holo_mc_cfg, base_dir=base_holo, exp_dir=self.mc_dir_name, energy_dir=self.holo_matrix_path,
             id_=f'AffinityWorker {self.id} holo_mc')
+        pipes_ = {'apo_adapt': self.apo_adapt_pipe, 'holo_adapt': self.holo_adapt_pipe,
+                  'apo_mc': self.apo_mc_pipe, 'holo_mc': self.holo_mc_pipe}
 
         # write bias input paths into configs prior to running setup (thus, dumping configs)
         handle_bias_inp(self.apo_mc_pipe), handle_bias_inp(self.holo_mc_pipe)
+
+        # conditionally apply fields' setters and changes
+        def handle_set_fields(pipe_name, pipes):
+            if pipe_name in set_fields:
+                for group, field, value in set_fields[pipe_name]:
+                    pipes[pipe_name].base_mc_conf.set_field(group, field, value)
+
+        def handle_change_fields(pipe_name, pipes):
+            if pipe_name in change_fields:
+                for field, value in change_fields[pipe_name]:
+                    pipes[pipe_name].base_mc_conf.change_field(field, value)
+
+        if set_fields is not None:
+            for name in pipes_:
+                handle_set_fields(name, pipes_)
+        if change_fields is not None:
+            for name in pipes_:
+                handle_change_fields(name, pipes_)
 
         # setup all Pipelines
         self.apo_adapt_pipe.setup()
