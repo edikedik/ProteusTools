@@ -2,7 +2,7 @@ import logging
 import operator as op
 import typing as t
 from copy import deepcopy
-from itertools import filterfalse, groupby
+from itertools import filterfalse, groupby, count
 from pathlib import Path
 from subprocess import Popen
 from time import time
@@ -148,7 +148,7 @@ class AffinitySearch:
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
             bias_constraints_threshold: float = 10,
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
-            run_i: int = 0, verbose: bool = True) -> pd.DataFrame:
+            run_i: t.Union[str, int] = 0, verbose: bool = True) -> pd.DataFrame:
         """
         Run each of prepared `AffinityWorkers`.
         :param num_proc: Number of processes.
@@ -219,6 +219,70 @@ class AffinitySearch:
         self.summaries = pd.concat([self.summaries, summaries]) if self.summaries is not None else summaries
         logging.info(f'AffinitySearch {self.id}: finished running workers')
         return self.summaries
+
+    def flatten(
+            self, pred: t.Callable[['AffinityWorker'], bool], num_proc: int = 1, steps: t.Optional[int] = None,
+            bias_constraints: bool = False, bias_constraints_holo_based: bool = True,
+            bias_constraints_mut_space: t.Union[t.Set[str], str] = '', bias_constraints_threshold: float = 10,
+            bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
+            init_with_all: bool = True, verbose: bool = True):
+        """
+        Function helps to flatten the workers' sequence space.
+        It runs a `pred` function on each worker in the `workers`
+        :param pred:
+        :param num_proc:
+        :param steps:
+        :param bias_constraints:
+        :param bias_constraints_holo_based:
+        :param bias_constraints_mut_space:
+        :param bias_constraints_threshold:
+        :param bias_constraints_apply_to:
+        :param init_with_all:
+        :param verbose:
+        :return:
+        """
+
+        def unflattened_ids():
+            return [w.id for w in self.workers.values() if pred(w)]
+
+        if init_with_all:
+            ids = list(self.workers.keys())
+        else:
+            try:
+                ids = unflattened_ids()
+            except (AttributeError, ValueError) as e:
+                logging.error(
+                    f'AffinitySearch {self.id} flattening: failed to calculate predicate on workers with an error {e}')
+                raise ValueError('Failed to calculate predicate on workers')
+
+        init_num_ids = len(ids)
+        if not ids:
+            raise ValueError('`pred` is True for all workers, and there is none to flatten')
+        bias_kwargs = dict(
+            bias_constraints=bias_constraints,
+            bias_constraints_holo_based=bias_constraints_holo_based,
+            bias_constraints_threshold=bias_constraints_threshold,
+            bias_constraints_mut_space=bias_constraints_mut_space,
+            bias_constraints_apply_to=bias_constraints_apply_to)
+        summary = self.run_workers(
+            num_proc=num_proc, cleanup=True, run_mc=False,
+            transfer_bias=False, run_i='flatten_0', ids=ids,
+            verbose=True,
+            **bias_kwargs)
+        summaries = [summary]
+        counter = range(1, steps + 1) if steps is not None else count(start=1)
+        if verbose:
+            counter = tqdm(counter, desc='AffinitySearch flattening')
+        for i in counter:
+            summaries.append(self.run_workers(
+                num_proc=num_proc, cleanup=True, overwrite_summaries=True, run_mc=False,
+                continue_adapt=True, transfer_bias=False, ids=ids, verbose=False, run_i=f'flatten_{i}',
+                **bias_kwargs
+            ))
+            logging.info(f'AffinitySearch {self.id} flattening: {len(ids)} out of {init_num_ids} remain')
+            if not ids:
+                break
+        return summaries
 
     def affinities(
             self, dump: bool = True, dump_name: str = 'AFFINITY.tsv',
