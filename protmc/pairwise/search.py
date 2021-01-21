@@ -225,25 +225,27 @@ class AffinitySearch:
             bias_constraints: bool = False, bias_constraints_holo_based: bool = True,
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '', bias_constraints_threshold: float = 10,
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
-            init_with_all: bool = True, verbose: bool = True):
+            init_with_all: bool = True, verbose: bool = True) -> t.List[pd.DataFrame]:
         """
         Function helps to flatten the workers' sequence space.
-        It runs a `pred` function on each worker in the `workers`
-        :param pred:
-        :param num_proc:
-        :param steps:
-        :param bias_constraints:
-        :param bias_constraints_holo_based:
-        :param bias_constraints_mut_space:
-        :param bias_constraints_threshold:
-        :param bias_constraints_apply_to:
-        :param init_with_all:
-        :param verbose:
-        :return:
+        :param pred: predicate function accepting an `AffinityWorker`
+        and returning `True` if a worker can be considered "flat" else `False`.
+        :param num_proc: Number of processors to take.
+        :param steps: Number of steps to run the procedure. If `None`, will run until
+        :param bias_constraints: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_holo_based: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_mut_space: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_threshold: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_apply_to: See `AffinityWorker.run` docs for details.
+        :param init_with_all: Start with all available workers (useful when workers has only been initialised,
+        and it is not possible to calculate `pred` on them).
+        :param verbose: If True, will print the first flattening round (useful to estimate average per-worker time),
+        then regular progress bar for each flattening round.
+        :return: A list of summaries for each flattening round.
         """
 
         def unflattened_ids():
-            return [w.id for w in self.workers.values() if pred(w)]
+            return [w.id for w in self.workers.values() if not pred(w)]
 
         if init_with_all:
             ids = list(self.workers.keys())
@@ -267,7 +269,7 @@ class AffinitySearch:
         summary = self.run_workers(
             num_proc=num_proc, cleanup=True, run_mc=False,
             transfer_bias=False, run_i='flatten_0', ids=ids,
-            verbose=True,
+            verbose=verbose,
             **bias_kwargs)
         summaries = [summary]
         counter = range(1, steps + 1) if steps is not None else count(start=1)
