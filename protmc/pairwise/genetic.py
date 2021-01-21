@@ -2,7 +2,8 @@ import typing as t
 from collections import namedtuple
 from dataclasses import dataclass, field
 from functools import partial
-from itertools import chain, groupby
+from itertools import chain, groupby, product, starmap, filterfalse
+from warnings import warn
 
 import genetic.operators as ops
 import joblib
@@ -29,11 +30,10 @@ Types = t.NamedTuple('Types', [('fst', np.ndarray),
                                ('map_rev', t.Dict[int, str])])
 Bounds = t.NamedTuple('Bounds', [('lower', t.Optional[float]),
                                  ('upper', t.Optional[float])])
-Columns = t.NamedTuple('Columns', [('affinity', str),
-                                   ('stability', str),
-                                   ('pos', str),
-                                   ('seq', str),
-                                   ('seq_subset', str)])
+Columns = t.NamedTuple('Columns', [('pos', str),
+                                   ('seq_subset', str),
+                                   ('affinity', str),
+                                   ('stability', str)])
 Record = t.NamedTuple('Record', [('age', int), ('score', float)])
 Stats = t.NamedTuple('Stats', [('NumGenes', int),
                                ('NumPositions', int),
@@ -46,6 +46,7 @@ Stats = t.NamedTuple('Stats', [('NumGenes', int),
                                ('CCMeanDegree', float),
                                ('CCMeanEdgeScore', float),
                                ('CCRawScore', float)])
+IsOriginalCol = 'IsOriginalPair'
 
 
 @dataclass
@@ -119,7 +120,8 @@ class ParsingParams:
     `Results_path`: Path to the "results" dataframe. The latter holds five columns.
     Their default names are specified in `Results_columns` attribute.
     `Results_columns`: A `Columns` namedtuple, holding column names for
-    'affinity', 'stability', 'position', 'sequence', and 'sequence subset'.
+    'position', 'sequence', 'sequence subset', 'affinity', and 'stability'.
+    Mind the order! We expect the `RESULTS` DataFrame to have the same columns in that exact order.
     `Affinity_bounds`: A `Bounds` namedtuple holding lower and upper bounds for affinity (both can be `None`).
     `Affinity_cap`: ...
     `Stability_bounds`: A `Bounds` namedtuple holding lower and upper bounds for stability (both can be `None`).
@@ -128,12 +130,13 @@ class ParsingParams:
     `Reverse_score`: Whether to multiply scores by -1.
     """
     Results_path: str
-    Results_columns: Columns = Columns('affinity', 'stability', 'pos', 'seq', 'seq_subset')
+    Results_columns: Columns = Columns('pos', 'seq_subset', 'affinity', 'stability')
     Affinity_bounds: Bounds = Bounds(None, None)
     Affinity_cap: Bounds = Bounds(None, None)
     Stability_bounds: Bounds = Bounds(None, None)
     Scale_range: Bounds = Bounds(0, 1)
     Reverse_score: bool = True
+    Use_singletons: bool = True
 
 
 @dataclass
@@ -224,8 +227,54 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
     :param params: `ParsingParams` dataclass instance.
     :return: Parsed df ready to be sliced into a `GenePool`.
     """
-    df = pd.read_csv(params.Results_path, sep='\t').dropna()
     cols = params.Results_columns
+    df = pd.read_csv(params.Results_path, sep='\t')[list(cols)].dropna()
+
+    # Map protonation states to single types
+    def map_proto_states(seq: str) -> str:
+        proto_map = AminoAcidDict().proto_mapping
+        return "".join([proto_map[c] if c in proto_map else c for c in seq])
+
+    df[cols.seq_subset] = df[cols.seq_subset].apply(map_proto_states)
+    df = df.groupby(
+        [cols.pos, cols.seq_subset], as_index=False
+    ).agg(
+        {cols.stability: 'mean', cols.affinity: 'mean'}
+    )
+
+    # Filter pairs
+    def is_singleton(p: str):
+        return len(set(p.split('-'))) == 1
+
+    singletons_idx = df[cols.pos].apply(is_singleton)
+    pairs = df[~singletons_idx]
+    singletons = df[singletons_idx]
+    pairs['IsOriginalPair'] = True
+    if params.Use_singletons:
+        if not len(singletons):
+            warn('No singletons; check the input table with the results')
+            df = pairs
+        else:
+            pairs_covered = {(pos, aa) for _, pos, aa in pairs[[cols.pos, cols.seq_subset]].itertuples()}
+            Row = namedtuple('Row', cols)
+            derived_pairs = pd.DataFrame(
+                list(
+                    filterfalse(
+                        lambda r: (r[0], r[1]) in pairs_covered,
+                        starmap(
+                            lambda p1, p2: Row(f'{p1[0]}-{p2[0]}', f'{p1[1]}{p2[1]}', p1[2] + p2[2], p1[3] + p2[3]),
+                            filter(
+                                lambda x: int(x[0][0]) < int(x[1][0]),
+                                product(zip(
+                                    singletons[cols.pos].apply(lambda x: x.split('-')[0]),
+                                    singletons[cols.seq_subset],
+                                    singletons[cols.stability],
+                                    singletons[cols.affinity]), repeat=2))))))
+            derived_pairs['IsOriginalPair'] = False
+            df = pd.concat([derived_pairs, pairs]).sort_values(list(cols))
+    else:
+        df = pairs
+
     # Filter by bounds
     idx = np.ones(len(df)).astype(bool)
     if params.Affinity_bounds.lower is not None:
@@ -237,9 +286,6 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
     if params.Stability_bounds.upper is not None:
         idx &= df[cols.stability] < params.Stability_bounds.upper
     df = df[idx]
-
-    # Filter pairs
-    df = df[df[cols.pos].apply(lambda p: len(set(p.split('-'))) == 2)]
 
     # Cap affinity at certain values
     l, h = params.Affinity_cap
@@ -254,18 +300,6 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
         scores = -scores
     df[cols.affinity] = scale(scores, params.Scale_range.lower, params.Scale_range.upper)
 
-    # Map protonation states to single types
-    def map_proto_states(seq: str) -> str:
-        proto_map = AminoAcidDict().proto_mapping
-        return "".join([proto_map[c] if c in proto_map else c for c in seq])
-
-    df[cols.seq_subset] = df[cols.seq_subset].apply(map_proto_states)
-    df[cols.seq] = df[cols.seq].apply(map_proto_states)
-    df = df.groupby(
-        [cols.pos, cols.seq, cols.seq_subset], as_index=False
-    ).agg(
-        {cols.stability: 'mean', cols.affinity: 'mean'}
-    )
     return df
 
 
@@ -280,9 +314,9 @@ def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> GenePool:
     :param params: Parsing parameters.
     """
     cols = params.Results_columns
-    Unit = namedtuple('Gene', [cols.pos, cols.seq, cols.seq_subset, 'score'])
-    genes = (Unit(pos, seq, sub, s) for _, pos, seq, sub, s in df[
-        [cols.pos, cols.seq, cols.seq_subset, cols.affinity]].itertuples())
+    Gene_ = namedtuple('Gene', [cols.pos, cols.seq_subset, 'score'])
+    genes = (Gene_(*x[1:]) for x in df[
+        [cols.pos, cols.seq_subset, cols.affinity]].itertuples())
     genes_mapping = {g: i for i, g in enumerate(genes)}
     genes_mapping_rev = {v: k for k, v in genes_mapping.items()}
     return GenePool(genes_mapping, genes_mapping_rev)
@@ -295,7 +329,7 @@ def prepare_types(pool: GenePool) -> Types:
     (2) Same as previous, for the second position, (3) Mapping between amino-acid one-letter codes
     and their integer associates, and (4) The latter reversed.
     """
-    types_pos1, types_pos2 = map(lambda i: [x[2][i] for x in pool.map], [0, 1])
+    types_pos1, types_pos2 = map(lambda i: [x[1][i] for x in pool.map], [0, 1])
     types_pool = sorted(set(types_pos1 + types_pos2))
     types_map = {x: i for i, x in enumerate(types_pool)}
     types_map_rev = {v: k for k, v in types_map.items()}
