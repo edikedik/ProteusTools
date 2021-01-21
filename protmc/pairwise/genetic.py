@@ -171,17 +171,8 @@ class RichIndividual:
         self.stats = self._create_stats(score_fn, parsing_results.Positions, parsing_results.Types)
         self.mut_space = self._mutation_space(parsing_results)
 
-    def _as_graph(self) -> nx.Graph:
-        g = nx.Graph()
-        edges = sorted(
-            ((*map(int, u.pos.split('-')), u.score) for u in self.genes),
-            key=lambda x: (x[0], x[1]))
-
-        groups = groupby(edges, key=lambda x: (x[0], x[1]))
-        for (n1, n2), values in groups:
-            values = list(values)
-            g.add_edge(n1, n2, n=len(values), s=round(sum(x[2] for x in values), 1))
-        return g
+    def _as_graph(self) -> nx.MultiGraph:
+        return nx.MultiGraph(list(((*map(int, u.pos.split('-')), {'s': u.score}) for u in self.genes)))
 
     def _create_stats(self, score_fn: t.Callable[[np.ndarray], float], ps: Positions, ts: Types) -> Stats:
         ccs = list(nx.connected.connected_components(self.graph))
