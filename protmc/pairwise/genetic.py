@@ -117,7 +117,7 @@ class ParsingParams:
     Dataclass holding changeable params for preparing results for the genetic algorithm.
     It is passed to `prepare_data` function.
 
-    `Results_path`: Path to the "results" dataframe. The latter holds five columns.
+    `Results`: Either a path to a "results" table or a DataFrame. The latter holds five columns.
     Their default names are specified in `Results_columns` attribute.
     `Results_columns`: A `Columns` namedtuple, holding column names for
     'position', 'sequence', 'sequence subset', 'affinity', and 'stability'.
@@ -129,14 +129,15 @@ class ParsingParams:
     After the scaling, we refer to these as "scores".
     `Reverse_score`: Whether to multiply scores by -1.
     """
-    Results_path: str
+    Results: t.Union[str, pd.DataFrame]
     Results_columns: Columns = Columns('pos', 'seq_subset', 'affinity', 'stability')
     Affinity_bounds: Bounds = Bounds(None, None)
     Affinity_cap: Bounds = Bounds(None, None)
     Stability_bounds: Bounds = Bounds(None, None)
     Scale_range: Bounds = Bounds(0, 1)
     Reverse_score: bool = True
-    Use_singletons: bool = True
+    Use_singletons: bool = False
+    Exclude_types: t.List[t.Tuple[t.Union[str, int], str]] = field(default_factory=list)
 
 
 @dataclass
@@ -209,22 +210,34 @@ class RichIndividual:
 def prepare_df(params: ParsingParams) -> pd.DataFrame:
     """
     Parses a DataFrame, typically an output of AffinitySearch, to be used in genetic algorithm.
-    Specifically:
-    1. Filters by affinity and stability boundaries, if any
-    2. Reverses and scales scores
-    3. Excludes singletons
-    4. Maps protonation states to a single type
 
     :param params: `ParsingParams` dataclass instance.
     :return: Parsed df ready to be sliced into a `GenePool`.
     """
     cols = params.Results_columns
-    df = pd.read_csv(params.Results_path, sep='\t')[list(cols)].dropna()
+    if isinstance(params.Results, pd.DataFrame):
+        df = params.Results[list(cols)].dropna().copy()
+    elif isinstance(params.Results, str):
+        df = pd.read_csv(params.Results, sep='\t')[list(cols)].dropna()
+    else:
+        raise TypeError('Unsupported type of the `Results` attribute')
 
     # Map protonation states to single types
     def map_proto_states(seq: str) -> str:
         proto_map = AminoAcidDict().proto_mapping
         return "".join([proto_map[c] if c in proto_map else c for c in seq])
+
+    if params.Exclude_types:
+        ps = {str(x[0]) for x in params.Exclude_types}
+        ts = {x[1] for x in params.Exclude_types}
+        p1, p2 = map(
+            lambda i: list(zip(df[cols.pos].apply(lambda x: x.split('-')[i]),
+                               df[cols.seq_subset].apply(lambda x: x[i]))),
+            [0, 1])
+        idx1, idx2 = map(
+            lambda p: np.array([x in ps and y in ts for x, y in p]),
+            [p1, p2])
+        df = df[~(idx1 | idx2)]
 
     df[cols.seq_subset] = df[cols.seq_subset].apply(map_proto_states)
     df = df.groupby(
