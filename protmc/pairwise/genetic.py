@@ -2,7 +2,7 @@ import typing as t
 from collections import namedtuple
 from dataclasses import dataclass, field
 from functools import partial
-from itertools import chain, groupby, product, starmap, filterfalse
+from itertools import chain, product, starmap, filterfalse
 from warnings import warn
 
 import genetic.operators as ops
@@ -11,7 +11,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import ray
-from genetic.base import Mutator, Operators
+from genetic.base import Mutator, Operators, Callback
 from genetic.evolvers import GenericEvolver
 from numba import njit
 from tqdm import tqdm
@@ -230,13 +230,13 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
     if params.Exclude_types:
         ps = {str(x[0]) for x in params.Exclude_types}
         ts = {x[1] for x in params.Exclude_types}
-        p1, p2 = map(
+        p1_, p2_ = map(
             lambda i: list(zip(df[cols.pos].apply(lambda x: x.split('-')[i]),
                                df[cols.seq_subset].apply(lambda x: x[i]))),
             [0, 1])
         idx1, idx2 = map(
             lambda p: np.array([x in ps and y in ts for x, y in p]),
-            [p1, p2])
+            [p1_, p2_])
         df = df[~(idx1 | idx2)]
 
     df[cols.seq_subset] = df[cols.seq_subset].apply(map_proto_states)
@@ -602,6 +602,24 @@ class NoPopulations(Exception):
     pass
 
 
+class ProgressSaver(Callback):
+    def __init__(self, freq: int):
+        self.freq = freq
+        self.generation = 0
+        self.acc = []
+
+    def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
+            -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
+        self.generation += 1
+        if self.generation % self.freq == 0:
+            scores = np.array([r.score for r in records])
+            self.acc.append((
+                self.generation,
+                np.mean(scores),
+                np.max(scores)))
+        return individuals, records, operators
+
+
 class Genetic:
     """
     Class uses `ParsingResults` returned by `prepare_data` and `GeneticParams` instance to setup
@@ -612,9 +630,11 @@ class Genetic:
     (2) `evolve` to evolve X generations of the current populations.
     """
 
-    def __init__(self, parsing_results: ParsingResults, genetic_params: GeneticParams):
+    def __init__(self, parsing_results: ParsingResults, genetic_params: GeneticParams,
+                 callbacks: t.Optional[t.List[Callback]] = None):
         self._parsing_results = parsing_results
         self._genetic_params = genetic_params
+        self.callbacks = [] or callbacks
 
         # Setup helpers for operators
         self.score_func = partial(
@@ -745,6 +765,8 @@ class Genetic:
         if verbose:
             data_to_evolve = tqdm(data_to_evolve, desc='Evolving population: ', total=len(self.populations))
         if len(self.populations) > 1 and parallel:
+            if self.callbacks:
+                warn('Parallel execution want preserve internal state of callbacks')
             evolver = partial(self._evolver.evolve, num_gen, self.ops, self.genetic_params.Population_size)
             results = ray.get([_evolve_remote.remote(evolver, x[0], x[1]) for x in data_to_evolve])
         else:
@@ -752,7 +774,7 @@ class Genetic:
                 lambda x: self._evolver.evolve(
                     num_gen, operators=self.ops,
                     gensize=self.genetic_params.Population_size,
-                    individuals=x[0], records=x[1]),
+                    individuals=x[0], records=x[1], callbacks=self.callbacks),
                 data_to_evolve
             ))
         pops, recs = [x[0] for x in results], [x[1] for x in results]
