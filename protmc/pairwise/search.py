@@ -2,7 +2,7 @@ import logging
 import operator as op
 import typing as t
 from copy import deepcopy
-from itertools import filterfalse, groupby, count
+from itertools import filterfalse, groupby, count, chain
 from pathlib import Path
 from subprocess import Popen
 from time import time
@@ -110,6 +110,7 @@ class AffinitySearch:
         self.results: t.Optional[pd.DataFrame] = None
         self._active_mapping = {pos: i for i, pos in enumerate(sorted(active))}
         self.id = id(self) if id_ is None else id_
+        self.flattening_round: int = 0
         logging.info(f'AffinitySearch {self.id}: initialized')
 
     def setup_workers(self, dir_names: t.Optional[t.List[str]] = None,
@@ -225,13 +226,16 @@ class AffinitySearch:
             bias_constraints: bool = False, bias_constraints_holo_based: bool = True,
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '', bias_constraints_threshold: float = 10,
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
-            init_with_all: bool = True, verbose: bool = True) -> t.List[pd.DataFrame]:
+            init_with_all: bool = True, resume: bool = False, verbose: bool = True,
+            dump_summaries: bool = True, dump_summaries_path: t.Optional[str] = None) -> t.List[pd.DataFrame]:
         """
         Function helps to flatten the workers' sequence space.
+        It'll run ADAPT with the same config until `pred` is True for each worker or a predetermined number of `steps`.
         :param pred: predicate function accepting an `AffinityWorker`
-        and returning `True` if a worker can be considered "flat" else `False`.
-        :param num_proc: Number of processors to take.
+        and returning `True` if a worker's sequence space can be considered "flat" else `False`.
+        :param num_proc: A (max) number of processors to take.
         :param steps: Number of steps to run the procedure. If `None`, will run until
+        `pred` is True for each worker.
         :param bias_constraints: See `AffinityWorker.run` docs for details.
         :param bias_constraints_holo_based: See `AffinityWorker.run` docs for details.
         :param bias_constraints_mut_space: See `AffinityWorker.run` docs for details.
@@ -239,6 +243,10 @@ class AffinitySearch:
         :param bias_constraints_apply_to: See `AffinityWorker.run` docs for details.
         :param init_with_all: Start with all available workers (useful when workers has only been initialised,
         and it is not possible to calculate `pred` on them).
+        :param resume: Resume flattening from the last round.
+        :param dump_summaries: Whether to dump `summaries` attribute after each flattening round.
+        :param dump_summaries_path: Path to dump summaries.
+        If `None`, will dump to `{base_dir}/FLATTENING_SUMMARIES.TSV`
         :param verbose: If True, will print the first flattening round (useful to estimate average per-worker time),
         then regular progress bar for each flattening round.
         :return: A list of summaries for each flattening round.
@@ -247,6 +255,7 @@ class AffinitySearch:
         def unflattened_ids():
             return [w.id for w in self.workers.values() if not pred(w)]
 
+        # Decide which workers to start with
         if init_with_all:
             ids = list(self.workers.keys())
         else:
@@ -256,34 +265,55 @@ class AffinitySearch:
                 logging.error(
                     f'AffinitySearch {self.id} flattening: failed to calculate predicate on workers with an error {e}')
                 raise ValueError('Failed to calculate predicate on workers')
-
         init_num_ids = len(ids)
         if not ids:
             raise ValueError('`pred` is True for all workers, and there is none to flatten')
+
+        # Prepare common kwargs
         bias_kwargs = dict(
             bias_constraints=bias_constraints,
             bias_constraints_holo_based=bias_constraints_holo_based,
             bias_constraints_threshold=bias_constraints_threshold,
             bias_constraints_mut_space=bias_constraints_mut_space,
             bias_constraints_apply_to=bias_constraints_apply_to)
-        summary = self.run_workers(
-            num_proc=num_proc, cleanup=True, run_mc=False,
-            transfer_bias=False, run_i='flatten_0', ids=ids,
-            verbose=verbose,
-            **bias_kwargs)
-        summaries = [summary]
-        counter = range(1, steps + 1) if steps is not None else count(start=1)
+
+        # Whether to resume flattening or start anew
+        if not resume:
+            self.flattening_round = 0
+            summary = self.run_workers(
+                num_proc=num_proc, cleanup=True, run_mc=False,
+                transfer_bias=False, run_i='flatten_0', ids=ids,
+                verbose=verbose,
+                **bias_kwargs)
+            summaries = [summary]
+        else:
+            adapt_pipes = chain.from_iterable((w.apo_adapt_pipe, w.holo_adapt_pipe) for w in self.workers.values())
+            if any(pipe.last_bias is None for pipe in adapt_pipes):
+                raise RuntimeError('Unable to resume: some of the pipes miss accumulated bias')
+            summaries = []
+
+        # Prepare counters
+        start = self.flattening_round + 1
+        counter = range(start, steps + 1) if steps is not None else count(start)
         if verbose:
             counter = tqdm(counter, desc='AffinitySearch flattening')
+
+        # Run the event loop
         for i in counter:
             summaries.append(self.run_workers(
                 num_proc=num_proc, cleanup=True, overwrite_summaries=True, run_mc=False,
                 continue_adapt=True, transfer_bias=False, ids=ids, verbose=False, run_i=f'flatten_{i}',
                 **bias_kwargs
             ))
+            self.flattening_round += 1
+            # Dump summaries to track progress
+            if dump_summaries and self.summaries is not None:
+                path = dump_summaries_path or f'{self.base_dir}/FLATTENING_SUMMARIES.tsv'
+                self.summaries.to_csv(path, sep='\t', index=False)
             logging.info(f'AffinitySearch {self.id} flattening: {len(ids)} out of {init_num_ids} remain')
             if not ids:
                 break
+
         return summaries
 
     def affinities(
