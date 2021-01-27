@@ -169,8 +169,9 @@ class Pipeline:
         if self.last_bias is None:
             self.last_bias = last_bias.sort_values('var')
         else:
+            last_bias_ = center_at_ref_states(self.mc_conf, self.last_bias)
             self.last_bias = pd.concat(
-                [self.last_bias, last_bias]
+                [last_bias_, last_bias]
             ).groupby(
                 'var', as_index=False
             ).agg(
@@ -262,13 +263,11 @@ class Pipeline:
         """
         Setup a new run using previously developed bias.
 
-        :param new_exp_name: the name of the new experiment (must be different from the previous experiment name)
-        (in case of continuing multi-replica or multi-trajectory run)
+        :param new_exp_name: the name of the new experiment
         :param mc_config_changes: changes passed to the `run` method
         """
         if not self.ran_setup:
-            logging.warning(f'Pipeline {self.id}: setting up continuation without prior setup run; '
-                            f'are you sure you ran the pipeline?')
+            logging.warning(f'Pipeline {self.id}: setting up continuation without prior call to setup')
         self.exp_dir_name = new_exp_name
         mode = self.mc_conf.mode.field_values[0]
 
@@ -403,6 +402,39 @@ class Pipeline:
             if not (in_leave or ext_valid):
                 remove(p)
         logging.info(f'Pipeline {self.id}: cleaned up')
+
+
+def bias_ref_states(adapt_conf: config.ProtMCconfig) -> t.Dict[str, str]:
+    space = adapt_conf.get_field_value('Adapt_Space')
+    if isinstance(space, str):
+        space = [space]
+    pos = sorted(set(chain.from_iterable(map(lambda x: x.split('-'), space))))
+    ref_states = {p: 'ALA' for p in pos}
+    constraints = adapt_conf.get_field_value('Space_Constraints')
+    if isinstance(constraints, str):
+        constraints = [constraints]
+    for c in constraints:
+        p, aa = c.split()[:2]
+        ref_states[p] = aa
+    return ref_states
+
+
+def center_at_ref_states(adapt_conf: config.ProtMCconfig, bias_df: pd.DataFrame) -> pd.DataFrame:
+    states = bias_ref_states(adapt_conf)
+    df = bias_df.copy()
+    var_split = df['var'].apply(lambda x: x.split('-'))
+    df['p1'] = [x[0] for x in var_split]
+    df['p2'] = [x[2] for x in var_split]
+
+    def center_state(group):
+        p1, p2 = group['p1'][0], group['p2'][0]
+        a1, a2 = states[p1], states[p2]
+        v = f'{p1}-{a1}-{p2}-{a2}'
+        offset = float(group.loc[group['var'] == v, 'bias'])
+        group['bias'] -= offset
+        return group
+
+    return df.groupby(['p1', 'p2']).apply(center_state)
 
 
 if __name__ == '__main__':
