@@ -226,7 +226,7 @@ class AffinitySearch:
             bias_constraints: bool = False, bias_constraints_holo_based: bool = True,
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '', bias_constraints_threshold: float = 10,
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
-            init_with_all: bool = True, resume: bool = False, verbose: bool = True,
+            init_with_all: bool = True, resume: bool = False, verbose: bool = True, ids: t.Optional[t.List[str]] = None,
             dump_summaries: bool = True, dump_summaries_path: t.Optional[str] = None) -> t.List[pd.DataFrame]:
         """
         Function helps to flatten the workers' sequence space.
@@ -236,6 +236,7 @@ class AffinitySearch:
         :param num_proc: A (max) number of processors to take.
         :param steps: Number of steps to run the procedure. If `None`, will run until
         `pred` is True for each worker.
+        :param ids: Restrict flattening to workers with particular ids provided through this argument
         :param bias_constraints: See `AffinityWorker.run` docs for details.
         :param bias_constraints_holo_based: See `AffinityWorker.run` docs for details.
         :param bias_constraints_mut_space: See `AffinityWorker.run` docs for details.
@@ -251,13 +252,14 @@ class AffinitySearch:
         then regular progress bar for each flattening round.
         :return: A list of summaries for each flattening round.
         """
+        reference_ids = list(self.workers) or ids
 
         def unflattened_ids():
-            return [w.id for w in self.workers.values() if not pred(w)]
+            return [w.id for w in self.workers.values() if w.id in reference_ids and not pred(w)]
 
         # Decide which workers to start with
         if init_with_all:
-            ids = list(self.workers.keys())
+            ids = list(self.workers)
         else:
             try:
                 ids = unflattened_ids()
@@ -269,22 +271,13 @@ class AffinitySearch:
         if not ids:
             raise ValueError('`pred` is True for all workers, and there is none to flatten')
 
-        # Prepare common kwargs
-        bias_kwargs = dict(
-            bias_constraints=bias_constraints,
-            bias_constraints_holo_based=bias_constraints_holo_based,
-            bias_constraints_threshold=bias_constraints_threshold,
-            bias_constraints_mut_space=bias_constraints_mut_space,
-            bias_constraints_apply_to=bias_constraints_apply_to)
-
         # Whether to resume flattening or start anew
         if not resume:
             self.flattening_round = 0
             summary = self.run_workers(
                 num_proc=num_proc, cleanup=True, run_mc=False,
                 transfer_bias=False, run_i='flatten_0', ids=ids,
-                verbose=verbose,
-                **bias_kwargs)
+                verbose=verbose)
             summaries = [summary]
         else:
             adapt_pipes = chain.from_iterable((w.apo_adapt_pipe, w.holo_adapt_pipe) for w in self.workers.values())
@@ -294,9 +287,17 @@ class AffinitySearch:
 
         # Prepare counters
         start = self.flattening_round + 1
-        counter = range(start, steps + 1) if steps is not None else count(start)
+        counter = range(start, start + steps + 1) if steps is not None else count(start)
         if verbose:
             counter = tqdm(counter, desc='AffinitySearch flattening')
+
+        # Prepare bias kwargs
+        bias_kwargs = dict(
+            bias_constraints=bias_constraints,
+            bias_constraints_holo_based=bias_constraints_holo_based,
+            bias_constraints_threshold=bias_constraints_threshold,
+            bias_constraints_mut_space=bias_constraints_mut_space,
+            bias_constraints_apply_to=bias_constraints_apply_to)
 
         # Run the event loop
         for i in counter:
@@ -311,6 +312,7 @@ class AffinitySearch:
                 path = dump_summaries_path or f'{self.base_dir}/FLATTENING_SUMMARIES.tsv'
                 self.summaries.to_csv(path, sep='\t', index=False)
             logging.info(f'AffinitySearch {self.id} flattening: {len(ids)} out of {init_num_ids} remain')
+            ids = unflattened_ids()
             if not ids:
                 break
 
@@ -875,7 +877,7 @@ class AffinityWorker:
         elif len(self.ref_seq_subset) == 2:
             ref = self.ref_seq_subset
         else:
-            raise NotImplemented('Not implemented for reference sequences larger than two')
+            raise NotImplementedError('Not implemented for reference sequences larger than two')
         sub = bias[bias['seq'] == ref]
         if len(sub) != 1:
             raise RuntimeError(f'Ambiguous results of finding reference sequence in the last bias of {pipe.id}')
