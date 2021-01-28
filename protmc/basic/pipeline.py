@@ -336,7 +336,7 @@ class Pipeline:
         # aggregate the results
         start = time()
         seqs = self.collect_seqs(parallel=parallel, walker=walker, n_walkers=n_walkers, overwrite=False)
-        finish = time() - start
+        finish = round(time() - start, 4)
         logging.info(f'Pipeline {self.id}: finished aggregating the results in {finish}s')
 
         # Compose summary
@@ -427,7 +427,7 @@ def center_at_ref_states(adapt_conf: config.ProtMCconfig, bias_df: pd.DataFrame)
     df['p2'] = [x[2] for x in var_split]
 
     def center_state(group):
-        p1, p2 = group['p1'][0], group['p2'][0]
+        p1, p2 = group['p1'].iloc[0], group['p2'].iloc[0]
         a1, a2 = states[p1], states[p2]
         v = f'{p1}-{a1}-{p2}-{a2}'
         offset = float(group.loc[group['var'] == v, 'bias'])
