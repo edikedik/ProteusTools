@@ -160,7 +160,7 @@ def space_constraints(
 def merge_constraints(existing: t.List[str], additional: t.List[str]) -> t.List[str]:
     total = sorted(existing + additional, key=lambda x: int(x.split()[0]))
     groups = groupby(total, lambda x: int(x.split()[0]))
-    return [f'{g} ' + " ".join(set(chain.from_iterable(x.split()[1:] for x in gg))) for g, gg in groups]
+    return [f'{g} ' + " ".join(sorted(set(chain.from_iterable(x.split()[1:] for x in gg)))) for g, gg in groups]
 
 
 def extract_constraints(configs: t.Iterable) -> t.Optional[t.List[str]]:
@@ -184,6 +184,7 @@ def infer_mut_space(
         constraints: t.Optional[t.List[str]],
         merge_proto: bool = True) -> int:
     """
+    # TODO: rename to mut_space_size
     Calculate mutation space size.
     :param mut_space_n_types: Number of types available in the initial mutation space.
     :param num_active: Number of active positions.
