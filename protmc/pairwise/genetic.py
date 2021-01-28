@@ -3,6 +3,7 @@ from collections import namedtuple
 from dataclasses import dataclass, field
 from functools import partial
 from itertools import chain, product, starmap, filterfalse
+from statistics import mean
 from warnings import warn
 
 import genetic.operators as ops
@@ -46,6 +47,12 @@ Stats = t.NamedTuple('Stats', [('NumGenes', int),
                                ('CCMeanDegree', float),
                                ('CCMeanEdgeScore', float),
                                ('CCRawScore', float)])
+EarlyStopping = t.NamedTuple('EarlyStopping', [('Rounds', int),
+                                               ('ScoreImprovement', float),
+                                               ('Selector', str)])
+ProgressRow = t.NamedTuple('Row', [('Generation', int),
+                                   ('MeanScore', float),
+                                   ('MaxScore', float)])
 IsOriginalCol = 'IsOriginalPair'
 
 
@@ -109,6 +116,7 @@ class GeneticParams:
     Tournaments_selection: int = 20
     Tournaments_policy: int = 20
     Use_cache: bool = False
+    Early_Stopping: EarlyStopping = EarlyStopping(50, 0.5, 'max')
 
 
 @dataclass
@@ -613,10 +621,10 @@ class ProgressSaver(Callback):
         self.generation += 1
         if self.generation % self.freq == 0:
             scores = np.array([r.score for r in records])
-            self.acc.append((
+            self.acc.append(ProgressRow(
                 self.generation,
-                np.mean(scores),
-                np.max(scores)))
+                mean(scores),
+                max(scores)))
         return individuals, records, operators
 
 
@@ -630,11 +638,9 @@ class Genetic:
     (2) `evolve` to evolve X generations of the current populations.
     """
 
-    def __init__(self, parsing_results: ParsingResults, genetic_params: GeneticParams,
-                 callbacks: t.Optional[t.List[Callback]] = None):
+    def __init__(self, parsing_results: ParsingResults, genetic_params: GeneticParams):
         self._parsing_results = parsing_results
         self._genetic_params = genetic_params
-        self.callbacks = [] or callbacks
 
         # Setup helpers for operators
         self.score_func = partial(
@@ -746,15 +752,14 @@ class Genetic:
         recs = self.records or [None] * len(self.populations)
         return joblib.dump((self.populations, recs), path, compress)[0]
 
-    def evolve(self, num_gen: int, parallel: bool = True, overwrite: bool = True, verbose: bool = False) \
-            -> t.Tuple[t.List[t.List[np.ndarray]], t.List[t.List[Record]]]:
+    def evolve(self, num_gen: int, overwrite: bool = True, callbacks: t.Optional[t.List[Callback]] = None) \
+            -> t.Tuple[t.List[t.List[np.ndarray]], t.List[t.List[Record]], t.Optional[t.List[Callback]], t.List[int]]:
         """
         Evolve populations currently held in `populations` attribute.
         :param num_gen: Number of generations to evolve each population.
-        :param parallel: Whether to evolve populations in parallel. This is obviously a preferred way.
-        To use, first initialize `ray` with `ray.init(num_cpus=X)`.
+        :param callbacks: Optional callbacks. Internal state won't be preserved.
+        Not really usable as of now.
         :param overwrite: Overwrite `populations` and `records` attributes with the results of the run.
-        :param verbose: Progress bar.
         :return: A tuple with (1) a list of evolved populations
         (where each population is a list of individuals, i.e. numpy arrays),
         and (2) a list with lists of individuals' records.
@@ -762,30 +767,44 @@ class Genetic:
         if self.populations is None:
             raise NoPopulations
         data_to_evolve = zip(self.populations, self.records or [None] * len(self.populations))
-        if verbose:
-            data_to_evolve = tqdm(data_to_evolve, desc='Evolving population: ', total=len(self.populations))
-        if len(self.populations) > 1 and parallel:
-            if self.callbacks:
-                warn('Parallel execution want preserve internal state of callbacks')
-            evolver = partial(self._evolver.evolve, num_gen, self.ops, self.genetic_params.Population_size)
-            results = ray.get([_evolve_remote.remote(evolver, x[0], x[1]) for x in data_to_evolve])
-        else:
-            results = list(map(
-                lambda x: self._evolver.evolve(
-                    num_gen, operators=self.ops,
-                    gensize=self.genetic_params.Population_size,
-                    individuals=x[0], records=x[1], callbacks=self.callbacks),
-                data_to_evolve
-            ))
-        pops, recs = [x[0] for x in results], [x[1] for x in results]
+        results = ray.get(
+            [_evolve_remote.remote(num_gen, self._evolver, x[0], x[1], self.ops, self.genetic_params, callbacks)
+             for x in data_to_evolve])
+        pops, recs, callbacks, gens = map(lambda i: [x[i] for x in results], range(4))
         if overwrite:
             self.populations, self.records = pops, recs
-        return pops, recs
+        return pops, recs, callbacks, gens
 
 
 @ray.remote
-def _evolve_remote(evolver, individuals, records):
-    return evolver(individuals, records)
+def _evolve_remote(
+        num_gen: int, evolver: GenericEvolver, individuals: t.List[Individual],
+        records: t.List[t.Optional[Record]], operators: Operators, genetic_params: GeneticParams,
+        callbacks: t.Optional[t.List[Callback]]) \
+        -> t.Tuple[t.List[Individual], t.List[Record], t.Optional[t.List[Callback]], int]:
+    gen = 0
+    stopping_counter = 0
+    stopping_previous = 0
+    stopping_func = {
+        'max': (lambda recs: max(r.score for r in recs)),
+        'mean': (lambda recs: mean(r.score for r in recs))
+    }[genetic_params.Early_Stopping.Selector]
+
+    for gen in range(1, num_gen + 1):
+        individuals, records = evolver.evolve_generation(
+            operators, genetic_params.Population_size, individuals, records)
+        if callbacks:
+            individuals, records, operators = evolver.call_callbacks(
+                callbacks, individuals, records, operators)
+        stopping_current = stopping_func(records)
+        if abs(stopping_current - stopping_previous) < genetic_params.Early_Stopping.ScoreImprovement:
+            stopping_counter += 1
+            if stopping_counter >= genetic_params.Early_Stopping.Rounds:
+                return individuals, records, callbacks, gen
+        else:
+            stopping_counter = 0
+            stopping_previous = stopping_current
+    return individuals, records, callbacks, gen
 
 
 if __name__ == '__main__':
