@@ -144,10 +144,9 @@ class AffinitySearch:
             run_adapt: bool = True, run_mc: bool = True, transfer_bias: bool = True,
             continue_adapt: bool = False, config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None,
             ids: t.Optional[t.Container[str]] = None,
-            bias_constraints: bool = False,
-            bias_constraints_holo_based: bool = True,
+            bias_constraints_apo: t.Tuple[bool, float] = (False, None),
+            bias_constraints_holo: t.Tuple[bool, float] = (False, None),
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
-            bias_constraints_threshold: float = 10,
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
             run_i: t.Union[str, int] = 0, verbose: bool = True) -> pd.DataFrame:
         """
@@ -164,10 +163,9 @@ class AffinitySearch:
         :param transfer_bias: Transfer last ADAPT biases to the MC experiment directories.
         :param continue_adapt: Continue ALF using previously accumulated biases.
         :param config_changes: If `continue_adapt`, apply these changes to `mc_conf` before running.
-        :param bias_constraints: See `AffinityWorker.run` docs for details.
-        :param bias_constraints_holo_based: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_apo: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_holo: See `AffinityWorker.run` docs for details.
         :param bias_constraints_mut_space: See `AffinityWorker.run` docs for details.
-        :param bias_constraints_threshold: See `AffinityWorker.run` docs for details.
         :param bias_constraints_apply_to: See `AffinityWorker.run` docs for details.
         :param ids: IDs of selected workers to run.
         :param run_i: Run (consecutive) number to complement summary info.
@@ -185,10 +183,9 @@ class AffinitySearch:
             run_adapt=run_adapt, run_mc=run_mc, transfer_bias=transfer_bias,
             continue_adapt=continue_adapt, config_changes=config_changes,
             overwrite_summaries=overwrite_summaries,
-            bias_constraints=bias_constraints,
-            bias_constraints_holo_based=bias_constraints_holo_based,
+            bias_constraints_apo=bias_constraints_apo,
+            bias_constraints_holo=bias_constraints_holo,
             bias_constraints_mut_space=mut_space,
-            bias_constraints_threshold=bias_constraints_threshold,
             bias_constraints_apply_to=bias_constraints_apply_to)
         workers = list(self.workers.values())
         if ids is not None:
@@ -223,11 +220,13 @@ class AffinitySearch:
 
     def flatten(
             self, pred: t.Callable[['AffinityWorker'], bool], num_proc: int = 1, steps: t.Optional[int] = None,
-            bias_constraints: bool = False, bias_constraints_holo_based: bool = True,
-            bias_constraints_mut_space: t.Union[t.Set[str], str] = '', bias_constraints_threshold: float = 10,
+            ids: t.Optional[t.List[str]] = None, init_with_all: bool = True, resume: bool = False,
+            bias_constraints_apo: t.Tuple[bool, float] = (False, None),
+            bias_constraints_holo: t.Tuple[bool, float] = (False, None),
+            bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
-            init_with_all: bool = True, resume: bool = False, verbose: bool = True, ids: t.Optional[t.List[str]] = None,
-            dump_summaries: bool = True, dump_summaries_path: t.Optional[str] = None) -> t.List[pd.DataFrame]:
+            dump_summaries: bool = True, dump_summaries_path: t.Optional[str] = None,
+            verbose: bool = True, ) -> t.List[pd.DataFrame]:
         """
         Function helps to flatten the workers' sequence space.
         It'll run ADAPT with the same config until `pred` is True for each worker or a predetermined number of `steps`.
@@ -237,10 +236,9 @@ class AffinitySearch:
         :param steps: Number of steps to run the procedure. If `None`, will run until
         `pred` is True for each worker.
         :param ids: Restrict flattening to workers with particular ids provided through this argument
-        :param bias_constraints: See `AffinityWorker.run` docs for details.
-        :param bias_constraints_holo_based: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_apo: See `AffinityWorker.run` docs for details.
+        :param bias_constraints_holo: See `AffinityWorker.run` docs for details.
         :param bias_constraints_mut_space: See `AffinityWorker.run` docs for details.
-        :param bias_constraints_threshold: See `AffinityWorker.run` docs for details.
         :param bias_constraints_apply_to: See `AffinityWorker.run` docs for details.
         :param init_with_all: Start with all available workers (useful when workers has only been initialised,
         and it is not possible to calculate `pred` on them).
@@ -293,9 +291,8 @@ class AffinitySearch:
 
         # Prepare bias kwargs
         bias_kwargs = dict(
-            bias_constraints=bias_constraints,
-            bias_constraints_holo_based=bias_constraints_holo_based,
-            bias_constraints_threshold=bias_constraints_threshold,
+            bias_constraints_apo=bias_constraints_apo,
+            bias_constraints_holo=bias_constraints_holo,
             bias_constraints_mut_space=bias_constraints_mut_space,
             bias_constraints_apply_to=bias_constraints_apply_to)
 
@@ -646,10 +643,9 @@ class AffinityWorker:
             run_adapt: bool = True, run_mc: bool = True, transfer_bias: bool = True,
             continue_adapt: bool = False, config_changes: t.Optional[t.List[t.Tuple[str, t.Any]]] = None,
             return_self: bool = True, filter_results_by_constraints: bool = True,
-            bias_constraints: bool = False,
-            bias_constraints_holo_based: bool = True,
+            bias_constraints_apo: t.Tuple[bool, float] = (False, None),
+            bias_constraints_holo: t.Tuple[bool, float] = (False, None),
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
-            bias_constraints_threshold: float = 10,
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc')) \
             -> t.Tuple[pd.DataFrame, t.Optional['AffinityWorker']]:
         """
@@ -666,16 +662,13 @@ class AffinityWorker:
         :param config_changes: If `continue_adapt`, apply these changes to `mc_conf` before running.
         :param return_self: Whether to return `self` (useful for CPU-parallelization)
         :param filter_results_by_constraints:
-        :param bias_constraints: Whether to impose constraints of a mutation space based on previous bias.
-        If `True`, types having bias values above the threshold will be excluded from the mutation space.
-        If there are existing constraints in either of the `ADAPT` configs, they will be merged
-        and concatenated with the bias-derived constraints.
-        :param bias_constraints_holo_based: Use "holo adapt" pipe to derive constraints. Otherwise use "apo adapt" pipe.
-        Bias is taken from the `last_bias` attribute of the corresponding `Pipeline` object.
+        :param bias_constraints_apo: A tuple with two values: first, whether to use bias constraints based on the apo
+        state, and second is the threshold to apply. Thus, for position Pi, the corresponding type Ai will be excluded
+        iff all combinations with (Pi Ai) have bias exceeding the threshold. Existing constraints in any of the configs
+        will be merged and concatenated with the bias-derived constraints.
+        :param bias_constraints_holo: Same as `bias_constraints_apo`, but based on the holo state's biases
         :param bias_constraints_mut_space: Either a path to the `mutation_space` file,
         or a set of amino acid three letter codes, defining the mutation space.
-        :param bias_constraints_threshold: Threshold for the bias values.
-        Will only use biases with the energy higher than the threshold.
         :param bias_constraints_apply_to: Apply the derived constraints to the following `Pipelines`.
         Full list of pipelines with correct namings is given in the default value.
         :return: a DataFrame with 4 rows (Summary's returned by the Pipeline's).
@@ -700,16 +693,25 @@ class AffinityWorker:
             self.holo_adapt_pipe.setup_continuation(
                 new_exp_name=self.holo_adapt_pipe.exp_dir_name,
                 mc_config_changes=config_changes)
-        if bias_constraints:
+
+        if bias_constraints_apo[0] or bias_constraints_holo[0]:
             if not bias_constraints_mut_space:
                 raise ValueError('Provide mutation space to use bias-based constraints')
             logging.info(f'AffinityWorker {self.id}: Constraining {bias_constraints_apply_to} pipelines '
                          f'based on previous bias')
+        if bias_constraints_apo[0]:
             self.bias_based_constraints(
                 mut_space=bias_constraints_mut_space,
-                bias_threshold=bias_constraints_threshold,
-                holo_based=bias_constraints_holo_based,
+                bias_threshold=bias_constraints_apo[1],
+                holo_based=False,
                 apply_to=bias_constraints_apply_to)
+        if bias_constraints_holo[0]:
+            self.bias_based_constraints(
+                mut_space=bias_constraints_mut_space,
+                bias_threshold=bias_constraints_holo[1],
+                holo_based=True,
+                apply_to=bias_constraints_apply_to)
+
         if run_adapt or continue_adapt:
             logging.info(f'AffinityWorker {self.id}: running ADAPT pipes')
             self._run_pipes(self.apo_adapt_pipe, self.holo_adapt_pipe, 'adapt', **run_common_args)
@@ -731,8 +733,7 @@ class AffinityWorker:
         # collect summaries into a single DataFrame
         self.collect_summaries(overwrite=overwrite_summaries)
         self.ran_pipes = True
-        end = time()
-        logging.info(f'AffinityWorker {self.id}: finished running pipes in {end - start}s')
+        logging.info(f'AffinityWorker {self.id}: finished running pipes in {round(time() - start, 2)}s')
         return self.run_summaries, self if return_self else None
 
     def collect_adapt(self, parallel: bool = False) -> None:
@@ -905,6 +906,7 @@ class AffinityWorker:
             p.setup(
                 mc_config_changes=[('Space_Constraints', constraints)],
                 continuation=True)
+        logging.info(f'AffinityWorker {self.id}: applied constraints {constraints} to {[p.id for p in pipes]}')
         return constraints
 
     def filter_res(self, seq_col: str = 'seq') -> None:
