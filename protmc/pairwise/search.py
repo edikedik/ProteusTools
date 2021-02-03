@@ -12,11 +12,11 @@ from multiprocess.pool import Pool
 from tqdm import tqdm
 
 from protmc.basic import config
-from protmc.common import utils as u
 from protmc.basic.affinity import affinity
-from protmc.common.base import NoReferenceError, AminoAcidDict
 from protmc.basic.pipeline import Pipeline, PipelineOutput
 from protmc.basic.stability import stability
+from protmc.common import utils as u
+from protmc.common.base import NoReferenceError, AminoAcidDict
 
 WorkerSetup = t.Tuple[config.ProtMCconfig, config.ProtMCconfig, str]
 ConfigSet = t.Dict[str, t.List[t.Tuple[str, str, t.Any]]]
@@ -198,6 +198,7 @@ class AffinitySearch:
         if num_proc > 1:
             with Pool(num_proc // 2) as pool:
                 results = pool.map(lambda w: w.run(collect_parallel=False, **common_args), workers, chunksize=1)
+            # results = ray.get([_run_worker.remote(w, common_args) for w in workers])
         else:
             results = [w.run(collect_parallel=True, **common_args) for w in workers]
 
@@ -900,7 +901,7 @@ class AffinityWorker:
         exclude = ((pos, set(aa for _, aa in group)) for pos, group in exclude_grouped)
         constraints = ((pos, mut_space - e) for pos, e in exclude)
         constraints = [f'{pos} {" ".join(c)}' for pos, c in constraints]
-        constraints = u.merge_constraints(existing, constraints)
+        constraints = u.merge_constraints(existing + constraints)
 
         for p in pipes:
             p.setup(
@@ -1029,12 +1030,12 @@ class AffinityWorker:
         self._subset_seq(res_apo.seqs), self._subset_seq(res_holo.seqs)
         return (res_apo, pipe_apo_), (res_holo, pipe_holo_)
 
-    def _subset_seq(self, df: pd.DataFrame, seq_col_name: str = 'seq', new_col_name: str = 'seq_subset') -> None:
+    def _subset_seq(self, results: pd.DataFrame, seq_col_name: str = 'seq', new_col_name: str = 'seq_subset') -> None:
         """
         Creates a new column in the results `df` based on existing 'seq_col_name` column -- `new_col_name`,
         using `self.active_subset_map` attribute to subset the sequences.
         """
-        df[new_col_name] = df[seq_col_name].apply(
+        results[new_col_name] = results[seq_col_name].apply(
             lambda x: "".join(x[i] for i in self.active_subset_mapped.values()))
 
     @staticmethod
@@ -1055,6 +1056,20 @@ class AffinityWorker:
         self.holo_adapt_results = self.holo_adapt_pipe.results
         self.holo_mc_results = self.holo_mc_pipe.results
 
+
+# @ray.remote
+# def _run_worker(worker: AffinityWorker, kwargs):
+#     return worker.run(collect_parallel=False, **kwargs)
+#
+#
+# @ray.remote
+# def _run_pipe(pipe: Pipeline, cleanup: bool = True, cleanup_kwargs: t.Optional[t.Dict[str, t.Any]] = None):
+#     pipe.run_blocking()
+#     res = pipe.collect_results(parallel=False)
+#     if cleanup:
+#         pipe.cleanup(**cleanup_kwargs)
+#     return res, pipe
+#
 
 def infer_mut_space(
         df: pd.DataFrame, pos_mapping: t.Mapping[int, int],

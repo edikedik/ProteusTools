@@ -1,5 +1,6 @@
 import operator as op
 import typing as t
+from collections import defaultdict
 from functools import reduce
 from io import StringIO
 from itertools import combinations, groupby, chain, filterfalse, starmap
@@ -118,7 +119,6 @@ def space_constraints(
     """
     Constraints all the positions of the {active} - {subset} = {inactive} set members to their native types.
     The function produces a list of values ready to be used in Space_Constraints protMC parameter.
-    CHECK
     :param reference: Reference sequence of the {active} positions set.
     :param subset: A subset of positions to exclude from active.
     :param active: A set of active positions, must be equal in length to `reference`.
@@ -153,14 +153,29 @@ def space_constraints(
             (x.split() for x in constraints))
         constraints = list(filter(lambda x: len(x.split()) > 1, constraints))
     if existing_constraints:
-        constraints = merge_constraints(existing=existing_constraints, additional=constraints)
+        constraints = merge_constraints(existing_constraints + constraints)
     return constraints
 
 
-def merge_constraints(existing: t.List[str], additional: t.List[str]) -> t.List[str]:
-    total = sorted(existing + additional, key=lambda x: int(x.split()[0]))
-    groups = groupby(total, lambda x: int(x.split()[0]))
+def join_constraints(constraints: t.List[str]) -> t.List[str]:
+    """
+    Groups constraints by position and takes a union of constraints per position
+    :param constraints: A list of strings "pos AA1 AA2 ..."
+    """
+    key = lambda x: int(x.split()[0])
+    groups = groupby(sorted(constraints, key=key), key)
     return [f'{g} ' + " ".join(sorted(set(chain.from_iterable(x.split()[1:] for x in gg)))) for g, gg in groups]
+
+
+def merge_constraints(constraints: t.List[str]) -> t.List[str]:
+    """
+    Groups constraints by position and intersects all constraints
+    :param constraints: A list of strings "pos AA1 AA2 ..."
+    """
+    key = lambda x: int(x.split()[0])
+    groups = groupby(sorted(constraints, key=key), key)
+    merged = ((g, reduce(lambda x, y: set(x) & set(y), (x.split()[1:] for x in gg))) for g, gg in groups)
+    return [f'{g} {" ".join(sorted(gg))}' for g, gg in merged]
 
 
 def extract_constraints(configs: t.Iterable) -> t.Optional[t.List[str]]:
@@ -170,7 +185,7 @@ def extract_constraints(configs: t.Iterable) -> t.Optional[t.List[str]]:
     constraints_ = [[c] if isinstance(c, str) else c for c in constraints_]
     if not constraints_:
         return None
-    return reduce(lambda x, y: merge_constraints(x, y), constraints_)
+    return reduce(lambda x, y: merge_constraints(x + y), constraints_)
 
 
 def adapt_space(pos: t.Union[T, t.Iterable[T]]) -> t.Union[t.List[str], str]:
@@ -222,6 +237,23 @@ def scale(data: t.Union[t.List[float], np.ndarray], a: float, b: float) -> t.Lis
         return (b - a) * (x - min_) / (max_ - min_) + a
 
     return _scale(data) if isinstance(data, np.ndarray) else [_scale(x) for x in data]
+
+
+def decompose_into_singletons(df: pd.DataFrame):
+    singleton_scores = defaultdict(lambda: np.nan, {
+        (x.pos.split('-')[0], x.seq_subset): x.affinity
+        for x in df.itertuples() if len(x.seq_subset) == 1})
+
+    def score_singleton(row, pos):
+        return singleton_scores[(row.pos.split('-')[pos], row.seq_subset[pos])]
+
+    is_singleton = df.seq_subset.apply(lambda s: len(s) == 1)
+    singletons = df[is_singleton].copy()
+    not_singletons = df[~is_singleton].copy()
+    singletons['Sai'], singletons['Saj'] = None, None
+    not_singletons['Sai'] = [score_singleton(x, 0) for x in not_singletons.itertuples()]
+    not_singletons['Saj'] = [score_singleton(x, 1) for x in not_singletons.itertuples()]
+    return pd.concat([singletons, not_singletons])
 
 
 if __name__ == '__main__':
