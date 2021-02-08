@@ -251,7 +251,7 @@ class AffinitySearch:
         then regular progress bar for each flattening round.
         :return: A list of summaries for each flattening round.
         """
-        reference_ids = list(self.workers) or ids
+        reference_ids = ids or (list(self.workers))
 
         def unflattened_ids():
             return [w.id for w in self.workers.values() if w.id in reference_ids and not pred(w)]
@@ -850,6 +850,20 @@ class AffinityWorker:
             self, mut_space: t.Union[t.Set[str], str],
             bias_threshold: float = 10, holo_based: bool = True,
             apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc')) -> t.List[str]:
+        # TODO: singletons are untested
+        if len(self.ref_seq_subset) == 1:
+            ref = self.ref_seq_subset * 2
+        elif len(self.ref_seq_subset) == 2:
+            ref = self.ref_seq_subset
+        else:
+            raise NotImplementedError('Not implemented for reference sequences larger than two')
+
+        if isinstance(mut_space, str):
+            if not Path(mut_space).exists():
+                raise ValueError(f'Invalid mut space path {mut_space}')
+            with open(mut_space) as f:
+                mut_space = {x.rstrip() for x in f if x != '\n'}
+
         pipes: t.List[Pipeline] = list(
             map(
                 lambda y: y[1],
@@ -868,27 +882,40 @@ class AffinityWorker:
         pipe = self.holo_adapt_pipe if holo_based else self.apo_adapt_pipe
 
         if pipe.last_bias is None:
-            raise ValueError(f'There is no bias accumulated for the Pipe {pipe.id}')
+            raise ValueError(f'AffinityWorker {self.id}: there is no bias accumulated for the Pipe {pipe.id}')
         bias = pipe.last_bias.copy()
         aa_mapping = AminoAcidDict().aa_dict
         bias['seq'] = bias['var'].apply(lambda x: "".join(
             [aa_mapping[x.split('-')[1]], aa_mapping[x.split('-')[3]]]
         ))
-        if len(self.ref_seq_subset) == 1:
-            ref = self.ref_seq_subset * 2
-        elif len(self.ref_seq_subset) == 2:
-            ref = self.ref_seq_subset
+
+        is_singleton = bias['var'].apply(lambda x: x.split('-')[0] == x.split('-')[2])
+        singletons = bias[is_singleton].copy().reset_index()
+        pairs = bias[~is_singleton].copy().reset_index()
+        bias = []
+        if singletons:
+            ref1, pos1 = ref[0] * 2, str(list(self.active_subset_mapped))[0]
+            ref2, pos2 = ref[1] * 2, str(list(self.active_subset_mapped))[1]
+            idx1 = ((singletons['seq'] == ref1) & (singletons['var'].split('-')[0] == pos1))
+            idx2 = ((singletons['seq'] == ref2) & (singletons['var'].split('-')[0] == pos2))
+            if not idx1.any():
+                raise RuntimeError(f'AffinityWorker {self.id}: could not find bias for {ref1} at pos {pos1}')
+            if not idx2.any():
+                raise RuntimeError(f'AffinityWorker {self.id}: could not find bias for {ref2} at pos {pos2}')
+            singletons.loc[idx1, 'bias'] = singletons.loc[idx1, 'bias'] - singletons[idx1]['bias'].iloc[0]
+            singletons.loc[idx2, 'bias'] = singletons.loc[idx2, 'bias'] - singletons[idx2]['bias'].iloc[0]
+            bias.append(singletons)
+        elif pairs:
+            sub = pairs[pairs['seq'] == ref]
+            if len(sub) != 1:
+                raise RuntimeError(f'AffinityWorker {self.id}: ambiguous results '
+                                   f'of finding {ref} in bias of {pipe.id}')
+            pairs['bias'] -= sub['bias'].iloc[0]
+            bias.append(pairs)
         else:
-            raise NotImplementedError('Not implemented for reference sequences larger than two')
-        sub = bias[bias['seq'] == ref]
-        if len(sub) != 1:
-            raise RuntimeError(f'Ambiguous results of finding reference sequence in the last bias of {pipe.id}')
-        bias['bias'] -= sub['bias'].iloc[0]
-        if isinstance(mut_space, str):
-            if not Path(mut_space).exists():
-                raise ValueError(f'Invalid mut space path {mut_space}')
-            with open(mut_space) as f:
-                mut_space = {x.rstrip() for x in f if x != '\n'}
+            raise RuntimeError(f'AffinityWorker {self.id}: could not separate '
+                               f'pairs and singletons of bias of pipe {pipe.id}')
+        bias = pd.concat(bias)
 
         pos = list(bias['var'].apply(lambda x: tuple(x.split('-')[:2])))
         pos += list(bias['var'].apply(lambda x: tuple(x.split('-')[2:])))
