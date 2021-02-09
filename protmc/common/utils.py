@@ -1,3 +1,4 @@
+import logging
 import operator as op
 import typing as t
 from collections import defaultdict
@@ -6,6 +7,7 @@ from io import StringIO
 from itertools import combinations, groupby, chain, filterfalse, starmap
 from itertools import product
 from pathlib import Path
+from warnings import warn
 
 import biotite.structure as bst
 import biotite.structure.io as io
@@ -138,7 +140,9 @@ def space_constraints(
 
     inactive = list(set(active) - set(subset))
     if not inactive:
-        raise ValueError('Nothing to constrain')
+        logging.warning(f'subset {subset} must be equal to {active}, '
+                        f'and there is nothing to constrain as a result.')
+        return []
     inactive_idx = [active.index(pos) for pos in inactive]
     ref_subset = [reference[i] for i in inactive_idx]
     constraints = sorted(
@@ -153,11 +157,11 @@ def space_constraints(
             (x.split() for x in constraints))
         constraints = list(filter(lambda x: len(x.split()) > 1, constraints))
     if existing_constraints:
-        constraints = merge_constraints(existing_constraints + constraints)
+        constraints = intersect_constraints(existing_constraints + constraints)
     return constraints
 
 
-def join_constraints(constraints: t.List[str]) -> t.List[str]:
+def union_constraints(constraints: t.List[str]) -> t.List[str]:
     """
     Groups constraints by position and takes a union of constraints per position
     :param constraints: A list of strings "pos AA1 AA2 ..."
@@ -167,7 +171,7 @@ def join_constraints(constraints: t.List[str]) -> t.List[str]:
     return [f'{g} ' + " ".join(sorted(set(chain.from_iterable(x.split()[1:] for x in gg)))) for g, gg in groups]
 
 
-def merge_constraints(constraints: t.List[str]) -> t.List[str]:
+def intersect_constraints(constraints: t.List[str]) -> t.List[str]:
     """
     Groups constraints by position and intersects all constraints
     :param constraints: A list of strings "pos AA1 AA2 ..."
@@ -185,7 +189,7 @@ def extract_constraints(configs: t.Iterable) -> t.Optional[t.List[str]]:
     constraints_ = [[c] if isinstance(c, str) else c for c in constraints_]
     if not constraints_:
         return None
-    return reduce(lambda x, y: merge_constraints(x + y), constraints_)
+    return reduce(lambda x, y: intersect_constraints(x + y), constraints_)
 
 
 def adapt_space(pos: t.Union[T, t.Iterable[T]]) -> t.Union[t.List[str], str]:

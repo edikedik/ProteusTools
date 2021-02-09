@@ -404,7 +404,7 @@ class Pipeline:
         logging.info(f'Pipeline {self.id}: cleaned up')
 
 
-def bias_ref_states(adapt_conf: config.ProtMCconfig) -> t.Dict[str, str]:
+def bias_ref_states(adapt_conf: config.ProtMCconfig) -> t.Optional[t.Dict[str, str]]:
     space = adapt_conf.get_field_value('Adapt_Space')
     if isinstance(space, str):
         space = [space]
@@ -413,6 +413,8 @@ def bias_ref_states(adapt_conf: config.ProtMCconfig) -> t.Dict[str, str]:
     constraints = adapt_conf.get_field_value('Space_Constraints')
     if isinstance(constraints, str):
         constraints = [constraints]
+    elif constraints is None:
+        return None
     for c in constraints:
         p, aa = c.split()[:2]
         ref_states[p] = aa
@@ -421,6 +423,9 @@ def bias_ref_states(adapt_conf: config.ProtMCconfig) -> t.Dict[str, str]:
 
 def center_at_ref_states(adapt_conf: config.ProtMCconfig, bias_df: pd.DataFrame) -> pd.DataFrame:
     states = bias_ref_states(adapt_conf)
+    if states is None:
+        # TODO: temporary fix if finding reference fails in `Space_Constraints` absence
+        return bias_df
     df = bias_df.copy()
     var_split = df['var'].apply(lambda x: x.split('-'))
     df['p1'] = [x[0] for x in var_split]

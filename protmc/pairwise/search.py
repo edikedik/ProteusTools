@@ -221,7 +221,7 @@ class AffinitySearch:
 
     def flatten(
             self, pred: t.Callable[['AffinityWorker'], bool], num_proc: int = 1, steps: t.Optional[int] = None,
-            ids: t.Optional[t.List[str]] = None, init_with_all: bool = True, resume: bool = False,
+            ids: t.Optional[t.List[str]] = None, init_with_all: bool = True, run_mc: bool = True, resume: bool = False,
             bias_constraints_apo: t.Tuple[bool, float] = (False, None),
             bias_constraints_holo: t.Tuple[bool, float] = (False, None),
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
@@ -236,6 +236,7 @@ class AffinitySearch:
         :param num_proc: A (max) number of processors to take.
         :param steps: Number of steps to run the procedure. If `None`, will run until
         `pred` is True for each worker.
+        :param run_mc: Run MC after running ADAPT. Useful if `pred` depends on MC's results.
         :param ids: Restrict flattening to workers with particular ids provided through this argument
         :param bias_constraints_apo: See `AffinityWorker.run` docs for details.
         :param bias_constraints_holo: See `AffinityWorker.run` docs for details.
@@ -274,8 +275,8 @@ class AffinitySearch:
         if not resume:
             self.flattening_round = 0
             summary = self.run_workers(
-                num_proc=num_proc, cleanup=True, run_mc=False,
-                transfer_bias=False, run_i='flatten_0', ids=ids,
+                num_proc=num_proc, cleanup=True, run_mc=run_mc,
+                transfer_bias=run_mc, run_i='flatten_0', ids=ids,
                 verbose=verbose)
             summaries = [summary]
         else:
@@ -286,7 +287,7 @@ class AffinitySearch:
 
         # Prepare counters
         start = self.flattening_round + 1
-        counter = range(start, start + steps + 1) if steps is not None else count(start)
+        counter = range(start, start + steps) if steps is not None else count(start)
         if verbose:
             counter = tqdm(counter, desc='AffinitySearch flattening')
 
@@ -300,8 +301,8 @@ class AffinitySearch:
         # Run the event loop
         for i in counter:
             summaries.append(self.run_workers(
-                num_proc=num_proc, cleanup=True, overwrite_summaries=True, run_mc=False,
-                continue_adapt=True, transfer_bias=False, ids=ids, verbose=False, run_i=f'flatten_{i}',
+                num_proc=num_proc, cleanup=True, overwrite_summaries=True, run_mc=run_mc,
+                continue_adapt=True, transfer_bias=run_mc, ids=ids, verbose=False, run_i=f'flatten_{i}',
                 **bias_kwargs
             ))
             self.flattening_round += 1
@@ -468,8 +469,12 @@ class AffinitySearch:
         # put varying parameters into configs
         apo_adapt_cfg.set_field('ADAPT_PARAMS', 'Adapt_Space', adapt_space)
         holo_adapt_cfg.set_field('ADAPT_PARAMS', 'Adapt_Space', adapt_space)
-        for cfg in [apo_adapt_cfg, apo_mc_cfg, holo_adapt_cfg, holo_mc_cfg]:
-            cfg.set_field('MC_PARAMS', 'Space_Constraints', constraints)
+        if constraints:
+            for cfg in [apo_adapt_cfg, apo_mc_cfg, holo_adapt_cfg, holo_mc_cfg]:
+                cfg.set_field('MC_PARAMS', 'Space_Constraints', constraints)
+        else:
+            logging.warning(f'AffinitySearch {self.id}: no constraints for subset {active_subset}. '
+                            f'Make sure it covers all range of positions')
 
         # setup and return worker
         worker = AffinityWorker(
@@ -928,7 +933,7 @@ class AffinityWorker:
         exclude = ((pos, set(aa for _, aa in group)) for pos, group in exclude_grouped)
         constraints = ((pos, mut_space - e) for pos, e in exclude)
         constraints = [f'{pos} {" ".join(c)}' for pos, c in constraints]
-        constraints = u.merge_constraints(existing + constraints)
+        constraints = u.intersect_constraints(existing + constraints)
 
         for p in pipes:
             p.setup(
@@ -940,9 +945,11 @@ class AffinityWorker:
     def filter_res(self, seq_col: str = 'seq') -> None:
         aa_mapping = AminoAcidDict().aa_dict
         pipes = (self.apo_adapt_pipe, self.apo_mc_pipe, self.holo_adapt_pipe, self.holo_mc_pipe)
-        constraints_split = map(
-            lambda x: x.split(),
-            u.extract_constraints([pipe.mc_conf for pipe in pipes]))
+        constraints = u.extract_constraints([pipe.mc_conf for pipe in pipes])
+        if constraints is None:
+            logging.info(f'AffinityWorker {self.id}: no constraints to filter results on')
+            return
+        constraints_split = map(lambda x: x.split(), constraints)
         constraints_of_subset = [
             (self.active_subset_mapped[int(c[0])], [aa_mapping[x] for x in c[1:]]) for c in constraints_split
             if int(c[0]) in self.active_subset_mapped
