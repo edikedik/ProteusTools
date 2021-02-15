@@ -221,11 +221,13 @@ class AffinitySearch:
 
     def flatten(
             self, pred: t.Callable[['AffinityWorker'], bool], num_proc: int = 1, steps: t.Optional[int] = None,
-            ids: t.Optional[t.List[str]] = None, init_with_all: bool = True, run_mc: bool = True, resume: bool = False,
+            ids: t.Optional[t.List[str]] = None, init_with_all: bool = True, resume: bool = False,
+            run_mc: bool = True, flush_mc_results: bool = True,
             bias_constraints_apo: t.Tuple[bool, float] = (False, None),
             bias_constraints_holo: t.Tuple[bool, float] = (False, None),
             bias_constraints_mut_space: t.Union[t.Set[str], str] = '',
             bias_constraints_apply_to: t.Tuple[str, ...] = ('apo_adapt', 'apo_mc', 'holo_adapt', 'holo_mc'),
+            bias_keep_history: bool = False,
             dump_summaries: bool = True, dump_summaries_path: t.Optional[str] = None,
             verbose: bool = True, ) -> t.List[pd.DataFrame]:
         """
@@ -237,11 +239,14 @@ class AffinitySearch:
         :param steps: Number of steps to run the procedure. If `None`, will run until
         `pred` is True for each worker.
         :param run_mc: Run MC after running ADAPT. Useful if `pred` depends on MC's results.
+        :param flush_mc_results: Clean MC results prior to running workers.
         :param ids: Restrict flattening to workers with particular ids provided through this argument
         :param bias_constraints_apo: See `AffinityWorker.run` docs for details.
         :param bias_constraints_holo: See `AffinityWorker.run` docs for details.
         :param bias_constraints_mut_space: See `AffinityWorker.run` docs for details.
         :param bias_constraints_apply_to: See `AffinityWorker.run` docs for details.
+        :param bias_keep_history: Keep current bias of each Pipeline object
+        under {pipeline.exp_dir}/{bias_history}/{flattening_round}.tsv}
         :param init_with_all: Start with all available workers (useful when workers has only been initialised,
         and it is not possible to calculate `pred` on them).
         :param resume: Resume flattening from the last round.
@@ -252,6 +257,24 @@ class AffinitySearch:
         then regular progress bar for each flattening round.
         :return: A list of summaries for each flattening round.
         """
+
+        def dump_bias(workers: t.Iterable[AffinityWorker], step: int) -> None:
+            def dump(pipe: Pipeline):
+                base = f'{pipe.exp_dir}/bias_history'
+                Path(base).mkdir(exist_ok=True)
+                pipe.last_bias.to_csv(f'{base}/{step}.tsv')
+                return
+
+            for w in workers:
+                dump(w.apo_adapt_pipe)
+                dump(w.holo_adapt_pipe)
+            return
+
+        def clean_mc_results(worker_ids) -> None:
+            for w_id in worker_ids:
+                self.workers[w_id].apo_mc_pipe.results, self.workers[w_id].holo_mc_pipe.results = None, None
+                self.workers[w_id].apo_mc_results, self.workers[w_id].holo_mc_results = None, None
+
         reference_ids = ids or (list(self.workers))
 
         def unflattened_ids():
@@ -277,8 +300,10 @@ class AffinitySearch:
             summary = self.run_workers(
                 num_proc=num_proc, cleanup=True, run_mc=run_mc,
                 transfer_bias=run_mc, run_i='flatten_0', ids=ids,
+                cleanup_kwargs=dict(leave_names='bias_history'),
                 verbose=verbose)
             summaries = [summary]
+            logging.info(f'AffinitySearch {self.id} flattening: finished round {self.flattening_round}')
         else:
             adapt_pipes = chain.from_iterable((w.apo_adapt_pipe, w.holo_adapt_pipe) for w in self.workers.values())
             if any(pipe.last_bias is None for pipe in adapt_pipes):
@@ -300,20 +325,29 @@ class AffinitySearch:
 
         # Run the event loop
         for i in counter:
+            if flush_mc_results:
+                clean_mc_results(ids)
             summaries.append(self.run_workers(
                 num_proc=num_proc, cleanup=True, overwrite_summaries=True, run_mc=run_mc,
                 continue_adapt=True, transfer_bias=run_mc, ids=ids, verbose=False, run_i=f'flatten_{i}',
-                **bias_kwargs
+                cleanup_kwargs=dict(leave_names='bias_history'), **bias_kwargs
             ))
             self.flattening_round += 1
             # Dump summaries to track progress
             if dump_summaries and self.summaries is not None:
                 path = dump_summaries_path or f'{self.base_dir}/FLATTENING_SUMMARIES.tsv'
                 self.summaries.to_csv(path, sep='\t', index=False)
-            logging.info(f'AffinitySearch {self.id} flattening: {len(ids)} out of {init_num_ids} remain')
+                logging.info(f'AffinitySearch {self.id} flattening: dumped summaries to {path}')
+            # Dump each pipeline's biases into the experiment directory
+            if bias_keep_history:
+                dump_bias(workers=[self.workers[id_] for id_ in ids], step=self.flattening_round)
+                logging.info(f'AffinitySearch {self.id} flattening: dumped current biases')
             ids = unflattened_ids()
+            logging.info(f'AffinitySearch {self.id} flattening: {len(ids)} out of {init_num_ids} remain -- ({ids})')
             if not ids:
+                logging.info(f'AffinitySearch {self.id} flattening: flattened all')
                 break
+            logging.info(f'AffinitySearch {self.id} flattening: finished round {self.flattening_round}')
 
         return summaries
 
