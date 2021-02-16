@@ -262,7 +262,7 @@ class AffinitySearch:
             def dump(pipe: Pipeline):
                 base = f'{pipe.exp_dir}/bias_history'
                 Path(base).mkdir(exist_ok=True)
-                pipe.last_bias.to_csv(f'{base}/{step}.tsv')
+                pipe.last_bias.to_csv(f'{base}/{step}.tsv', sep='\t', index=False)
                 return
 
             for w in workers:

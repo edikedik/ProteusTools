@@ -7,9 +7,11 @@ from itertools import islice, takewhile, starmap, count, groupby
 import pandas as pd
 from tqdm import tqdm
 
-from protmc.common.base import Summary, ParsedEntry
+from protmc.common.base import Summary, ParsedEntry, ShortSummary
 from protmc.common.utils import count_sequences
 
+
+# TODO: remove steps param
 
 def analyze_seq(
         seq: str, rich: str, steps: int,
@@ -49,12 +51,20 @@ def analyze_seq(
         if active:
             active = [positions.index(a) for a in active]
             entries = map(partial(subset_positions, pos=active), entries)
-        df = _agg_results(pd.DataFrame(entries), steps)
+        df = pd.DataFrame(entries).groupby(
+            'seq', as_index=False
+        ).agg(
+            total_count=pd.NamedAgg(column='counts', aggfunc='sum'),
+            # avg_energy=pd.NamedAgg(column='energy', aggfunc='mean'),
+            min_energy=pd.NamedAgg(column='energy', aggfunc='min'),
+            max_energy=pd.NamedAgg(column='energy', aggfunc='max')
+        )
+        df['seq_prob'] = df['total_count'] / df['total_count'].sum()
 
     return df
 
 
-def compose_summary(results: pd.DataFrame, mut_space_size: int):
+def compose_summary(results: pd.DataFrame, mut_space_size: int) -> t.Union[Summary, ShortSummary]:
     """
     Further aggregate the results dataframe outputted by `analyze_seq` or `analyze_seq_no_rich`
         to provide the summary of the run (see the Summary object for the list of fields)
@@ -63,27 +73,33 @@ def compose_summary(results: pd.DataFrame, mut_space_size: int):
     :return: Summary namedtuple object
     """
     counts = count_sequences(results['seq'])
-    return Summary(
+    if 'seq_prob' in results.columns:
+        return Summary(
+            num_unique=len(results['seq'].unique()),
+            num_unique_merged=counts,
+            coverage=counts / mut_space_size,
+            seq_prob_mean=results['seq_prob'].mean(),
+            seq_prob_std=results['seq_prob'].std(),
+            seq_prob_rss=((results['seq_prob'] - 1 / len(results)) ** 2).sum())
+    return ShortSummary(
         num_unique=len(results['seq'].unique()),
         num_unique_merged=counts,
-        coverage=counts / mut_space_size,
-        seq_prob_mean=results['seq_prob'].mean(),
-        seq_prob_std=results['seq_prob'].std(),
-        seq_prob_rss=((results['seq_prob'] - 1 / len(results)) ** 2).sum())
+        coverage=counts / mut_space_size, )
 
 
 def analyze_seq_no_rich(
         seq_path: str, matrix_bb: str, steps: int,
         active: t.Optional[t.List[int]] = None,
-        verbose: bool = False) -> pd.DataFrame:
+        verbose: bool = False, simple_output: bool = False) -> pd.DataFrame:
     """
     Same as `analyze_seq`, but instead of .rich file one must provide a path to a matrix.bb file to extract mappings.
-    :param seq_path: path to a .seq file
-    :param matrix_bb: path to a matrix file (diagonals)
-    :param steps: a number of steps (Trajectory_Length)
-    :param active: a list of active positions
-    :param verbose: print progress bar of parsing the .seq file
-    :return: a DataFrame with various statistics on the sampled sequences
+    :param seq_path: A path to a .seq file
+    :param matrix_bb: A path to a matrix file (diagonals)
+    :param steps: A number of steps (Trajectory_Length)
+    :param active: A list of active positions.
+    :param verbose: Print progress bar of parsing the .seq file.
+    :param simple_output: Aggregate only counts, disregard the energy.
+    :return: a DataFrame of sequences visited during the protmc run.
     """
     pdb_map, rot_map = matrix_mappings(matrix_bb)
 
@@ -100,8 +116,23 @@ def analyze_seq_no_rich(
         f.readline()
         if verbose:
             f = tqdm(f)
-        df = _agg_results(pd.DataFrame(map(parse, f)), steps)
-
+        df = pd.DataFrame(map(parse, f))
+    if simple_output:
+        df = df.groupby(
+            'seq', as_index=False
+        ).agg(
+            total_count=pd.NamedAgg(column='counts', aggfunc='sum')
+        )
+    else:
+        df = df.groupby(
+            'seq', as_index=False
+        ).agg(
+            total_count=pd.NamedAgg(column='counts', aggfunc='sum'),
+            # avg_energy=pd.NamedAgg(column='energy', aggfunc='mean'),
+            min_energy=pd.NamedAgg(column='energy', aggfunc='min'),
+            max_energy=pd.NamedAgg(column='energy', aggfunc='max')
+        )
+        df['seq_prob'] = df['total_count'] / df['total_count'].sum()
     return df
 
 
@@ -130,18 +161,6 @@ def matrix_mappings(matrix_bb: str):
             pdb_map[pdb_m[0]] = pdb_m[1]
             rot_map[rot_m[0]] = rot_m[1]
     return pdb_map, rot_map
-
-
-def _agg_results(results: pd.DataFrame, steps):
-    # TODO: mean energy is not currently correct -- should be counts * energy / nsteps
-    df = results.groupby('seq', as_index=False).agg(
-        total_count=pd.NamedAgg(column='counts', aggfunc='sum'),
-        # avg_energy=pd.NamedAgg(column='energy', aggfunc='mean'),
-        min_energy=pd.NamedAgg(column='energy', aggfunc='min'),
-        max_energy=pd.NamedAgg(column='energy', aggfunc='max'))
-    df['seq_prob'] = df['total_count'] / steps
-    return df.reset_index(drop=True)[
-        ['seq', 'total_count', 'seq_prob', 'min_energy', 'max_energy']]
 
 
 if __name__ == '__main__':

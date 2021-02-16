@@ -5,6 +5,7 @@ import pandas as pd
 Summary = t.NamedTuple('Summary', [
     ('num_unique', int), ('num_unique_merged', int), ('coverage', float),
     ('seq_prob_mean', float), ('seq_prob_std', float), ('seq_prob_rss', float)])
+ShortSummary = t.NamedTuple('ShortSummary', [('num_unique', int), ('num_unique_merged', int), ('coverage', float)])
 Population_element = t.NamedTuple('Population_element', [('seq', str), ('count', int)])
 AA_pair = t.NamedTuple('AA_pair', [('pos_i', str), ('pos_j', str), ('aa_i', str), ('aa_j', str)])
 PairBias = t.NamedTuple('PairBias', [('aa_pair', AA_pair), ('bias', float)])

@@ -17,7 +17,7 @@ from protmc.common.base import PipelineOutput
 from protmc.common.parsers import dump_bias_df
 from protmc.basic.post import analyze_seq_no_rich, compose_summary
 from protmc.basic.runner import Runner
-from protmc.common.utils import get_bias_state, bias_to_df, infer_mut_space
+from protmc.common.utils import get_bias_state, bias_to_df, mut_space_size, clean_dir
 
 
 def setup_exp_dir(base_dir: str, name: str) -> str:
@@ -154,9 +154,8 @@ class Pipeline:
             [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
         if existing_constraints is not None:
             existing_constraints = [c for c in existing_constraints if int(c.split()[0]) in self.active_pos]
-        return infer_mut_space(
-            self.mut_space_n_types, len(self.active_pos),
-            [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
+        return mut_space_size(self.mut_space_n_types, len(self.active_pos),
+                              [existing_constraints] if isinstance(existing_constraints, str) else existing_constraints)
 
     def store_bias(self) -> None:
         bias_path = self.mc_conf.get_field_value('Adapt_Output_File')
@@ -383,9 +382,9 @@ class Pipeline:
         return seqs
 
     def collect_summary(self, seqs: pd.DataFrame, n_walkers: int = 0, overwrite: bool = True) -> pd.DataFrame:
-        mut_space_size = self.infer_mut_space()
+        _mut_space_size = self.infer_mut_space()
         groups = seqs.groupby(['walker', 'exp'] if 'walker' in seqs.columns else ['exp'])
-        summaries = pd.DataFrame(compose_summary(x, mut_space_size) for _, x in groups)
+        summaries = pd.DataFrame(compose_summary(x, _mut_space_size) for _, x in groups)
         if n_walkers:
             summaries['walker'] = list(range(n_walkers))
         if overwrite and self.results is not None:
@@ -393,14 +392,7 @@ class Pipeline:
         return summaries
 
     def cleanup(self, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), leave_names: t.Tuple[str, ...] = ()):
-        files = glob(f'{self.exp_dir}/*')
-        if not files:
-            raise ValueError(f'No files are found in experiment directory {self.exp_dir}')
-        for p in files:
-            in_leave = any(n in p.split('/')[-1] for n in leave_names)
-            ext_valid = any(n in p.split('.')[-1] for n in leave_ext)
-            if not (in_leave or ext_valid):
-                remove(p)
+        clean_dir(path=self.exp_dir, leave_ext=leave_ext, leave_names=leave_names)
         logging.info(f'Pipeline {self.id}: cleaned up')
 
 

@@ -3,11 +3,12 @@ import operator as op
 import typing as t
 from collections import defaultdict
 from functools import reduce
+from glob import glob
 from io import StringIO
 from itertools import combinations, groupby, chain, filterfalse, starmap
 from itertools import product
+from os import remove
 from pathlib import Path
-from warnings import warn
 
 import biotite.structure as bst
 import biotite.structure.io as io
@@ -198,12 +199,11 @@ def adapt_space(pos: t.Union[T, t.Iterable[T]]) -> t.Union[t.List[str], str]:
     return [f'{p1}-{p2}' for p1, p2 in set(combinations(map(str, pos), 2))]
 
 
-def infer_mut_space(
+def mut_space_size(
         mut_space_n_types: int, num_active: int,
         constraints: t.Optional[t.List[str]],
         merge_proto: bool = True) -> int:
     """
-    # TODO: rename to mut_space_size
     Calculate mutation space size.
     :param mut_space_n_types: Number of types available in the initial mutation space.
     :param num_active: Number of active positions.
@@ -258,6 +258,38 @@ def decompose_into_singletons(df: pd.DataFrame):
     not_singletons['Sai'] = [score_singleton(x, 0) for x in not_singletons.itertuples()]
     not_singletons['Saj'] = [score_singleton(x, 1) for x in not_singletons.itertuples()]
     return pd.concat([singletons, not_singletons])
+
+
+def clean_dir(path: str, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), leave_names: t.Tuple[str, ...] = ()):
+    files = glob(f'{path}/*')
+    for p in files:
+        if Path(p).exists() and Path(p).is_file():
+            in_leave = any(n in p.split('/')[-1] for n in leave_names)
+            ext_valid = any(n in p.split('.')[-1] for n in leave_ext)
+            if not (in_leave or ext_valid):
+                remove(p)
+
+
+def split_before(iterable, pred, maxsplit=-1):
+    """
+    Taken from https://more-itertools.readthedocs.io/en/stable/_modules/more_itertools/more.html#split_before
+    """
+    if maxsplit == 0:
+        yield list(iterable)
+        return
+
+    buf = []
+    it = iter(iterable)
+    for item in it:
+        if pred(item) and buf:
+            yield buf
+            if maxsplit == 1:
+                yield [item] + list(it)
+                return
+            buf = []
+            maxsplit -= 1
+        buf.append(item)
+    yield buf
 
 
 if __name__ == '__main__':

@@ -4,8 +4,8 @@ from collections.abc import MutableMapping
 from copy import deepcopy
 from itertools import chain
 
-_Value = t.Union[str, float, int]
-_Values = t.Union[_Value, t.List[_Value], None]
+ConfigValue = t.Union[str, float, int]
+ConfigValues = t.Union[ConfigValue, t.List[ConfigValue], None]
 
 
 class ProtMCfield:
@@ -14,8 +14,8 @@ class ProtMCfield:
     """
 
     def __init__(
-            self, field_name: str, field_values: _Values,
-            comment: t.Optional[str] = None, default_value: _Values = None):
+            self, field_name: str, field_values: ConfigValues,
+            comment: t.Optional[str] = None, default_value: ConfigValues = None):
         self.field_name = field_name
         self.is_default = field_values == default_value or field_values is default_value
         self.is_empty = field_values is None
@@ -49,7 +49,7 @@ class ProtMCfieldGroup(MutableMapping):
     def __getitem__(self, item):
         return self._store[item] if item in self._store else None
 
-    def __setitem__(self, key: str, value: t.Union[_Values, ProtMCfield]):
+    def __setitem__(self, key: str, value: t.Union[ConfigValues, ProtMCfield]):
         if isinstance(value, ProtMCfield):
             self._store[key] = value
         else:
@@ -88,6 +88,7 @@ class ProtMCconfig(MutableMapping):
     def __init__(self, mode: t.Union[str, ProtMCfield, None], groups: t.Optional[t.List[ProtMCfieldGroup]]):
         self.mode = ProtMCfield('Mode', mode, 'The mode of the Proteus run') if isinstance(mode, str) else mode
         self._store = dict(zip((g.group_name for g in groups), groups))
+        self.last_dump_path: t.Optional[str] = None
 
     @property
     def fields(self):
@@ -139,13 +140,13 @@ class ProtMCconfig(MutableMapping):
             return f.field_values[0]
         return f.field_values
 
-    def change_field(self, field_name: str, field_values: _Values):
+    def change_field(self, field_name: str, field_values: ConfigValues):
         for g_name, group in self.items():
             for f_name, f in group.items():
                 if f_name == field_name:
                     self._store[g_name][f_name] = field_values
 
-    def set_field(self, group_name: str, field_name: str, field_values: _Values, comment: t.Optional[str] = None):
+    def set_field(self, group_name: str, field_name: str, field_values: ConfigValues, comment: t.Optional[str] = None):
         if group_name not in self._store:
             raise ValueError(f'No group with {group_name} is present in config')
         self._store[group_name][field_name] = ProtMCfield(
@@ -166,7 +167,7 @@ class ProtMCconfig(MutableMapping):
         for f in [f.field_name for f in self.fields if f.is_default]:
             self.rm_field(f)
 
-    def dump(self, path: str, rm_empty: bool = True) -> None:
+    def dump(self, path: str, rm_empty: bool = True, store_path: bool = True) -> None:
         """
         Dump a config into a file.
         """
@@ -176,6 +177,8 @@ class ProtMCconfig(MutableMapping):
             self.rm_empty_fields()
         with open(path, 'w') as f:
             print(self._format(), file=f)
+        if store_path:
+            self.last_dump_path = path
 
 
 def parse_field(field_name: str, config: str) -> t.Optional[ProtMCfield]:
@@ -282,7 +285,7 @@ def rm_defaults(group: ProtMCfieldGroup) -> ProtMCfieldGroup:
         group_fields=[f for f in group.values() if f.is_default])
 
 
-def change_field_all(configs: t.Iterable[ProtMCconfig], field_name: str, field_value: _Value):
+def change_field_all(configs: t.Iterable[ProtMCconfig], field_name: str, field_value: ConfigValue):
     """
     Helper function to apply the same changes to a group of configs
     """
@@ -293,7 +296,7 @@ def change_field_all(configs: t.Iterable[ProtMCconfig], field_name: str, field_v
 
 def set_field_all(
         configs: t.Iterable[ProtMCconfig], group_name: str, field_name: str,
-        field_values: _Value, field_comment: t.Optional[str] = None):
+        field_values: ConfigValue, field_comment: t.Optional[str] = None):
     """
     Helper function to set the same field with the same values for all of the configs
     """
