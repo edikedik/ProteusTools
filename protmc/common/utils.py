@@ -270,6 +270,13 @@ def clean_dir(path: str, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), 
                 remove(p)
 
 
+def subset_seq(df: pd.DataFrame, pos: t.Sequence[int], pos_mapping: t.Dict[int, int], subset_col: str = 'seq_subset'):
+    df = df.copy()
+    df[subset_col] = df['seq'].apply(lambda x: "".join(
+        [x[pos_mapping[p]] for p in pos]))
+    return df
+
+
 def split_before(iterable, pred, maxsplit=-1):
     """
     Taken from https://more-itertools.readthedocs.io/en/stable/_modules/more_itertools/more.html#split_before

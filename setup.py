@@ -17,6 +17,7 @@ setup(
     packages=find_packages(),
     # TODO: verify packages' versions
     install_requires=[
+        'pytest',
         'ray',
         'genetic',
         'numba',

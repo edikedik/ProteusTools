@@ -1,4 +1,6 @@
 import typing as t
+from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -41,6 +43,21 @@ HIP H H
 PRO P PG
 GLY G PG"""
 
+Id = t.Optional[t.Union[int, str]]
+
+
+@dataclass
+class WorkerParams:
+    working_dir: str
+    protmc_exe_path: str
+    energy_dir_path: str
+    active_pos: t.List[int]
+    config: "ProtMCConfig"
+    mut_space_number_of_types: int
+    last_bias_name: str = 'ADAPT.last.dat'
+    input_bias_name: str = 'ADAPT.inp.dat'
+    results_name: str = 'RESULTS.tsv'
+
 
 class AminoAcidDict:
     def __init__(self, inp: str = _AA_DICT):
@@ -65,6 +82,107 @@ class AminoAcidDict:
 
 class NoReferenceError(Exception):
     pass
+
+
+class AbstractWorker(metaclass=ABCMeta):
+    def __init__(self, id_: Id = None):
+        self._id = id_ or id(self)
+
+    @property
+    def id(self) -> Id:
+        return self._id
+
+    @property
+    @abstractmethod
+    def seqs(self) -> pd.DataFrame:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def summary(self) -> t.Union[Summary, ShortSummary]:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def params(self) -> WorkerParams:
+        raise NotImplementedError
+
+    @abstractmethod
+    def setup_io(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def run(self) -> t.Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    def collect_seqs(self) -> pd.DataFrame:
+        raise NotImplementedError
+
+    @abstractmethod
+    def compose_summary(self) -> t.Union[Summary, ShortSummary]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def cleanup(self) -> t.Any:
+        raise NotImplementedError
+
+
+class AbstractExecutor(metaclass=ABCMeta):
+    def __init__(self, id_: Id = None):
+        self._id = id_ or id(self)
+
+    @property
+    def id(self):
+        return self._id
+
+    @abstractmethod
+    def __call__(self, worker: AbstractWorker) -> AbstractWorker:
+        raise NotImplementedError
+
+
+class AbstractCallback(metaclass=ABCMeta):
+    def __init__(self, id_: Id = None):
+        self._id = id_ or id(self)
+
+    @property
+    def id(self):
+        return self._id
+
+    @abstractmethod
+    def __call__(self, worker: AbstractWorker) -> AbstractWorker:
+        raise NotImplementedError
+
+
+class AbstractPoolExecutor(metaclass=ABCMeta):
+    def __init__(self, id_: Id = None):
+        self._id = id_ or id(self)
+
+    @property
+    def id(self):
+        return self._id
+
+    def apply(self, executor: t.Type[AbstractExecutor], pool: t.Collection[t.Type[AbstractWorker]]) \
+            -> t.Collection[AbstractWorker]:
+        raise NotImplementedError
+
+
+class AbstractAggregator(metaclass=ABCMeta):
+    def __init__(self, id_: Id = None):
+        self._id = id_ or id(self)
+
+    @property
+    def id(self):
+        return self._id
+
+    @abstractmethod
+    def aggregate(self, workers: t.Collection[AbstractWorker]):
+        raise NotImplementedError
+
+
+class AbstractManager(metaclass=ABCMeta):
+    def __init__(self, id_: Id = None):
+        self._id = id_ or id(self)
 
 
 if __name__ == '__main__':

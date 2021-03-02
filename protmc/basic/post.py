@@ -108,7 +108,10 @@ def analyze_seq_no_rich(
         counts, energy = l_spl[1:3]
         positions = list(enumerate(l_spl[3:]))
         if active:
-            positions = [positions[pdb_map[str(p)]] for p in active]
+            try:
+                positions = [positions[pdb_map[str(p)]] for p in active]
+            except IndexError as e:
+                print(e, positions, pdb_map, active, sep='\n\n')
         seq = "".join(rot_map[i][p] for i, p in positions)
         return ParsedEntry(seq, int(counts), float(energy))
 
@@ -117,23 +120,11 @@ def analyze_seq_no_rich(
         if verbose:
             f = tqdm(f)
         df = pd.DataFrame(map(parse, f))
-    if simple_output:
-        df = df.groupby(
-            'seq', as_index=False
-        ).agg(
-            total_count=pd.NamedAgg(column='counts', aggfunc='sum')
-        )
-    else:
-        df = df.groupby(
-            'seq', as_index=False
-        ).agg(
-            total_count=pd.NamedAgg(column='counts', aggfunc='sum'),
-            # avg_energy=pd.NamedAgg(column='energy', aggfunc='mean'),
-            min_energy=pd.NamedAgg(column='energy', aggfunc='min'),
-            max_energy=pd.NamedAgg(column='energy', aggfunc='max')
-        )
-        df['seq_prob'] = df['total_count'] / df['total_count'].sum()
-    return df
+    agg_args = dict(total_count=pd.NamedAgg(column='counts', aggfunc='sum'))
+    if not simple_output:
+        agg_args['min_energy'] = pd.NamedAgg(column='energy', aggfunc='min')
+        agg_args['max_energy'] = pd.NamedAgg(column='energy', aggfunc='max')
+    return df.groupby('seq', as_index=False).agg(**agg_args)
 
 
 def matrix_mappings(matrix_bb: str):

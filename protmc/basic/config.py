@@ -8,6 +8,9 @@ ConfigValue = t.Union[str, float, int]
 ConfigValues = t.Union[ConfigValue, t.List[ConfigValue], None]
 
 
+# TODO: Remove redundant whitespaces and newlines between groups and fields
+
+
 class ProtMCfield:
     """
     A Field of the protMC config file.
@@ -119,7 +122,7 @@ class ProtMCconfig(MutableMapping):
         return f'{list(self._store)}'
 
     def _format(self) -> str:
-        head = f'# {"=" * 30} PROTEUS CONFIG FILE {"=" * 30} \n\n{self.mode}\n\n'
+        head = f'# {"=" * 30} CONFIG FILE {"=" * 30} \n\n{self.mode}\n\n'
         body = "\n".join(f'{g}\n\n' for g in self._store.values())
         return f'{head}\n{body}'
 
@@ -196,7 +199,7 @@ def parse_field(field_name: str, config: str) -> t.Optional[ProtMCfield]:
     return ProtMCfield(
         field_name=field_name,
         field_values=capture[2].split('\n'),
-        comment=capture[1].strip() if capture[1] else None
+        comment=capture[1].rstrip().lstrip() if capture[1] else None
     )
 
 
@@ -258,7 +261,7 @@ def parse_groups(config: str) -> t.Optional[t.List[ProtMCfieldGroup]]:
 def parse_config(config: str) -> ProtMCconfig:
     """
     Parses the whole config
-    :param config: a protMC config file (opened externally)
+    :param config: a protMC config as a single str
     :return: `ProtMCconfig` object
     :raises: ValueError on a failure to parse a config
     """
