@@ -80,14 +80,14 @@ class NoResidues(Exception):
 
 
 class Constrainer(AbstractCallback):
-    # TODO: currently this doesn't take into account the reference seq
-    #  (hence, its ALA-ALA in 99% of the cases)
     def __init__(self, pos_order: t.Mapping[int, int], id_: Id = None,
-                 bias_threshold: float = 10, count_threshold: int = 1):
+                 bias_threshold: float = 10, count_threshold: int = 1,
+                 ref_states: t.Optional[t.Dict[str, str]] = None):
         super().__init__(id_)
         self.bias_threshold = bias_threshold
         self.count_threshold = count_threshold
         self.pos_order = pos_order
+        self.ref_states = ref_states
 
     def get_bias(self, worker: Worker) -> t.Optional[pd.DataFrame]:
         raise NotImplementedError
@@ -118,7 +118,7 @@ class Constrainer(AbstractCallback):
             return worker
 
         # Find `ts1` -- a collection of types passing the threshold for
-        # the first position, and `ts2` -- for the second position.
+        # the first position (`p1`), and `ts2` -- for the second position.
         df = df[df.step == max(df.step)][['var', 'bias']]
         p1, ts1 = viable_types(df.copy(), first=True)
         p2, ts2 = viable_types(df.copy(), first=False)
@@ -158,7 +158,10 @@ class AdaptConstrainer(Constrainer):
         if worker.bias is None or worker.bias.bias is None:
             logging.debug(f'Constrainer {self.id} -- no bias for worker {worker.id}')
             return None
-        return worker.bias.bias
+        bias = worker.bias
+        if self.ref_states is not None:
+            bias = bias.center_at_ref(self.ref_states, overwrite=False)
+        return bias.bias
 
 
 class McConstrainer(Constrainer):
@@ -167,7 +170,10 @@ class McConstrainer(Constrainer):
         if not bias_path:
             logging.debug(f'Constrainer {self.id} -- no bias for worker {worker.id}')
             return None
-        return Bias().read_adapt_output(bias_path).bias
+        bias = Bias().read_adapt_output(bias_path)
+        if self.ref_states is not None:
+            bias = bias.center_at_ref(self.ref_states, overwrite=False)
+        return bias.bias
 
 
 if __name__ == '__main__':
