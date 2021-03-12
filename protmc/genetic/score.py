@@ -21,6 +21,10 @@ def gaussian_penalty(x: float, x_peak: float, sigma: float):
     return 1 / gaussian(x_peak, x_peak, sigma) * gaussian(x, x_peak, sigma)
 
 
+def sigma_helper(desired_penalty: float, deviation: float):
+    return (-deviation ** 2 / (2 * np.log(desired_penalty))) ** 1/2
+
+
 def score(indiv: Individual,
           min_size: int = 10, max_size: int = 100,
           pen_mut: bool = True, sigma_mut: float = 5, desired_space: float = 5 * np.log(18),

@@ -173,6 +173,9 @@ class AffinitySearch:
             num_cpus: t.Optional[int] = None,
             stop_run_on_actors_fail: bool = True) \
             -> t.Tuple[t.List[t.Tuple[ops.ADAPT, ops.MC]], t.Dict[str, pd.DataFrame]]:
+        # TODO: is it hard to allow non-blocking behavior?
+        # This would allow combining execution of different AffinitySearch instances in a
+        # single run time.
 
         def flatten_safely(actor, pair):
             try:
@@ -210,48 +213,6 @@ class AffinitySearch:
                     quadruplets[id_] = aggregator.aggregate((q[1], q[3]))
                     self._log_message(f'Aggregated {id_}')
         return pairs_flattened, quadruplets
-
-        # # Divide work
-        # chunks = divide(len(actors), self.get_workers().values())
-        # handles = []
-        # for i, (actor, chunk) in enumerate(zip(actors, chunks), start=1):
-        #     chunk = list(chunk)
-        #     if not chunk:
-        #         continue
-        #     handles += [actor.apply.remote(adapt_executor, pair, mc_executor) for pair in chunk]
-        #     ids = [(pair[0].id, pair[1].id) for pair in chunk]
-        #     self._log_message(f'Submitted workers {ids} to an actor FLATTENER-{i}')
-        #
-        # # Setup exec loop
-        # pairs_flattened = []
-        # quadruplets = {}
-        # # Run exec loop
-        # # TODO: not optimal: some actors finish too early and don't do nothing
-        # while len(handles):
-        #     done_ids, handles = ray.wait(handles)
-        #     if len(done_ids) != 1:
-        #         raise RuntimeError('Something went terribly wrong with `ray`')
-        #     try:
-        #         adapt, mc = ray.get(done_ids[0])
-        #     except (RayTaskError, RayActorError, ValueError) as e:
-        #         msg = f'Task {done_ids[0]} failed with an error {e}'
-        #         self._log_message(msg)
-        #         if stop_run_on_actors_fail:
-        #             for handle in handles:
-        #                 ray.kill(handle)
-        #             self._log_message(f'Terminated all actors')
-        #             raise RuntimeError(msg)
-        #         continue
-        #     pairs_flattened.append((adapt, mc))
-        #     self._done_ids.append((adapt.id, mc.id))
-        #     self._log_message(f'Flattened {adapt.id} and {mc.id}. Remaining: {len(handles)} pairs')
-        #     for q in self._get_quadruplets(pairs_flattened):
-        #         id_ = q[0].id.split('_')[0]
-        #         if id_ in quadruplets:
-        #             continue
-        #         quadruplets[id_] = aggregator.aggregate((q[1], q[3]))
-        #         self._log_message(f'Aggregated {id_}')
-        # return pairs_flattened, quadruplets
 
 
 if __name__ == '__main__':

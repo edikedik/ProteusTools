@@ -148,11 +148,11 @@ class Individual(AbstractIndividual):
                     key = list(self._graph[g.P1][g.P2])[0]
                     is_also_strong = self._graph[g.P1][g.P2][key]['gene'].C >= self.coupling_threshold
                     if is_strong and is_also_strong:
-                        # if both are strong, add edge
+                        # If both are strong, add edge
                         self._graph.add_edge(*e, gene=g)
                         return True
-                    elif not is_also_strong:
-                        # If the edge is weak -- replace it
+                    else:
+                        # Whatever the edge is -- replace it
                         self._graph.remove_edge(g.P1, g.P2, key)
                         self._graph.add_edge(*e, gene=g)
                         return True
@@ -197,7 +197,7 @@ class AverageFlexibleIndividual(AverageIndividual):
                         # if both are strong, add edge
                         self._graph.add_edge(*e, gene=g)
                         return True
-                    elif not is_also_strong:
+                    else:
                         # If the edge is weak -- replace it
                         self._graph.remove_edge(g.P1, g.P2, key)
                         self._graph.add_edge(*e, gene=g)

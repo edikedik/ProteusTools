@@ -174,4 +174,3 @@ def test_add_genes():
     assert 'AE' not in edges
 
     individual = AverageFlexibleIndividual(genes, 0.2)
-   

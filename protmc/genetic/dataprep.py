@@ -1,9 +1,9 @@
 import logging
+import operator as op
 import typing as t
 from functools import reduce
 from itertools import product, filterfalse, starmap, chain
 from warnings import warn
-import operator as op
 
 import numpy as np
 import pandas as pd
@@ -78,11 +78,14 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
             warn('No singletons; check the input table with the results')
             df = pairs
         else:
-            # Which pairs were already present?
+            # Which positions were already present?
+            pos_covered = set(df[cols.pos])
+            if params.Exclude_pairs is not None:
+                pos_covered |= {f'{p1}-{p2}' for p1, p2 in params.Exclude_pairs}
             pairs_covered = {(pos, aa) for _, pos, aa in pairs[[cols.pos, cols.seq_subset]].itertuples()}
             derived_pairs = pd.DataFrame(  # Wrap into df
                 filterfalse(  # Leave only new pairs
-                    lambda r: (r[0], r[1]) in pairs_covered,
+                    lambda r: r[0] in pos_covered,
                     starmap(  # Wrap into columns
                         lambda p1, p2: (f'{p1[0]}-{p2[0]}', f'{p1[1][0]}{p2[1][0]}',
                                         p1[2] + p2[2], p1[3] + p2[3], p1[4] + p2[4]),

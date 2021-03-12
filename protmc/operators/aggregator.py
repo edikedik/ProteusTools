@@ -33,8 +33,9 @@ class AffinityAggregator(AbstractAggregator):
         st1, st2 = map(self.stability, workers)
         df = pd.merge(st1, st2, on='seq', suffixes=suffixes, how='outer')
         if self.dump:
+            # TODO: this way of getting "MC root" dir is quite dumb
             w1_base, w2_base = map(lambda w: '/'.join(
-                w.params.working_dir.split('/')[:-2]), workers)
+                w.params.working_dir.split('/')[:-1]), workers)
             if w1_base == w2_base:
                 base = w1_base
             else:
