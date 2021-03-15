@@ -5,6 +5,7 @@ from itertools import chain
 from math import floor
 from random import sample
 from statistics import mean
+from warnings import warn
 
 import genetic.operators as ops
 import numpy as np
@@ -70,8 +71,8 @@ class Mutator:
 
     def deletion(self, individual: GenericIndividual) -> GenericIndividual:
         if len(individual) <= self.deletion_size:
-            raise RuntimeError(f"Can't delete {self.deletion_size} genes "
-                               f"from {len(individual)}-sized GenericIndividual")
+            warn(f"Can't delete {self.deletion_size} genes from {len(individual)}-sized GenericIndividual")
+            return individual
         del_genes = sample(individual.genes(), self.deletion_size)
         return individual.remove_genes(del_genes)
 
