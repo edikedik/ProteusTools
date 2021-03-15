@@ -15,14 +15,14 @@ from more_itertools import random_permutation, distribute, unzip
 from tqdm import tqdm
 
 from .base import Gene, GeneticParams, Record
-from .individual import Individual
+from .individual import GenericIndividual
 from .score import score
 
 
 def recombine_fractions(
-        mating_group: t.List[t.Tuple[Individual, Record]], brood_size: int,
+        mating_group: t.List[t.Tuple[GenericIndividual, Record]], brood_size: int,
         min_donate: float = 0.01, max_donate: float = 0.5):
-    def donate_genes(indiv: Individual):
+    def donate_genes(indiv: GenericIndividual):
         indiv = deepcopy(indiv)
         indiv_size = len(indiv)
         num_donate = np.random.randint(
@@ -31,7 +31,7 @@ def recombine_fractions(
         indiv.remove_genes(donated, update=False)
         return indiv, donated
 
-    def accept_donation(indiv: Individual, donation: t.Iterable[Gene]):
+    def accept_donation(indiv: GenericIndividual, donation: t.Iterable[Gene]):
         indiv.add_genes(donation)
         return indiv
 
@@ -41,14 +41,14 @@ def recombine_fractions(
     return [accept_donation(indiv, chunk) for indiv, chunk in zip(individuals, chunks)]
 
 
-def recombine_genes_uniformly(mating_group: t.List[t.Tuple[Individual, Record]], brood_size: int):
+def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Record]], brood_size: int):
     ts = set(indiv.coupling_threshold for indiv, _ in mating_group)
     if len(ts) > 1:
         raise RuntimeError('...')
     coupling_threshold = ts.pop()
     pool = random_permutation(chain.from_iterable(indiv.genes() for indiv, _ in mating_group))
     chunks = distribute(brood_size, pool)
-    return [Individual(genes, coupling_threshold) for genes in chunks]
+    return [GenericIndividual(genes, coupling_threshold) for genes in chunks]
 
 
 class Mutator:
@@ -60,7 +60,7 @@ class Mutator:
         self.acquisition_size = acquisition_size
         self.ps = ps
 
-    def mutation(self, individual: Individual) -> Individual:
+    def mutation(self, individual: GenericIndividual) -> GenericIndividual:
         num_mut = floor(len(individual) * self.mutable_fraction)
         if not num_mut:
             return individual
@@ -68,21 +68,21 @@ class Mutator:
         new_genes = sample(self.pool, num_mut)
         return individual.remove_genes(del_genes, update=False).add_genes(new_genes)
 
-    def deletion(self, individual: Individual) -> Individual:
+    def deletion(self, individual: GenericIndividual) -> GenericIndividual:
         if len(individual) <= self.deletion_size:
             raise RuntimeError(f"Can't delete {self.deletion_size} genes "
-                               f"from {len(individual)}-sized Individual")
+                               f"from {len(individual)}-sized GenericIndividual")
         del_genes = sample(individual.genes(), self.deletion_size)
         return individual.remove_genes(del_genes)
 
-    def acquisition(self, individual: Individual) -> Individual:
+    def acquisition(self, individual: GenericIndividual) -> GenericIndividual:
         new_genes = sample(self.pool, self.acquisition_size)
         return individual.add_genes(new_genes)
 
     def _choose(self):
         return np.random.choice([self.mutation, self.deletion, self.acquisition], p=self.ps)
 
-    def __call__(self, individuals: t.List[Individual]) -> t.List[Individual]:
+    def __call__(self, individuals: t.List[GenericIndividual]) -> t.List[GenericIndividual]:
         mutators = [self._choose() for _ in range(len(individuals))]
         return [f(individual) for f, individual in zip(mutators, individuals)]
 
@@ -93,8 +93,8 @@ class ProgressSaver(Callback):
         self.generation = 0
         self.acc = []
 
-    def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
-            -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
+    def __call__(self, individuals: t.List[GenericIndividual], records: t.List[Record], operators: Operators) \
+            -> t.Tuple[t.List[GenericIndividual], t.List[Record], Operators]:
         self.generation += 1
         if self.generation % self.freq == 0:
             scores = [r.score for r in records]
@@ -144,14 +144,14 @@ class GA:
         self.populations: t.Optional[t.List[t.List[np.ndarray]]] = None
         self.records: t.Optional[t.List[t.List[Record]]] = None
 
-    def spawn_population(self, individual_type=Individual) -> t.List[Individual]:
+    def spawn_population(self, individual_type=GenericIndividual) -> t.List[GenericIndividual]:
         return [
             individual_type(
                 sample(self.genetic_params.Gene_pool, self.genetic_params.Individual_base_size),
                 self.genetic_params.Coupling_threshold)
             for _ in range(self.genetic_params.Population_size)]
 
-    def spawn_populations(self, n: int, overwrite: bool = True, individual_type=Individual):
+    def spawn_populations(self, n: int, overwrite: bool = True, individual_type=GenericIndividual):
         populations = [self.spawn_population(individual_type) for _ in range(n)]
         if overwrite:
             self.populations, self.records = populations, None
@@ -223,10 +223,10 @@ class GA:
 
 @ray.remote
 def _evolve_remote(
-        num_gen: int, evolver: GenericEvolver, individuals: t.List[Individual],
+        num_gen: int, evolver: GenericEvolver, individuals: t.List[GenericIndividual],
         records: t.List[t.Optional[Record]], operators: Operators, genetic_params: GeneticParams,
         callbacks: t.Optional[t.List[Callback]]) \
-        -> t.Tuple[t.List[Individual], t.List[Record], t.Optional[t.List[Callback]], int]:
+        -> t.Tuple[t.List[GenericIndividual], t.List[Record], t.Optional[t.List[Callback]], int]:
     gen = 0
     stopping_counter = 0
     stopping_previous = 0

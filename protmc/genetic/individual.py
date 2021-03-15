@@ -6,14 +6,9 @@ from math import log
 from statistics import mean
 
 import networkx as nx
+from more_itertools import peekable
 
 from .base import Gene, MultiGraphEdge, AbstractIndividual, GenePool
-
-GraphComponents = t.Tuple[
-    t.List[MultiGraphEdge],
-    t.List[MultiGraphEdge],
-    t.List[nx.MultiGraph],
-    t.Dict[t.Tuple[int, int], t.List[MultiGraphEdge]]]
 
 
 # TODO: don't forget to state the assumption that gene.P1 < gene.P2
@@ -49,11 +44,12 @@ def mut_space_size(graph: nx.MultiGraph, estimate=True) -> int:
     return reduce(op.mul, gs)
 
 
-class Individual(AbstractIndividual):
+class GenericIndividual(AbstractIndividual):
     # multiple strong links, single weak link
-    def __init__(self, genes: GenePool, coupling_threshold: float = 0):
+    def __init__(self, genes: GenePool, coupling_threshold: float = 0, max_mut_space: bool = True):
         self._graph = genes2light_graph(genes, coupling_threshold)
         self.coupling_threshold = coupling_threshold
+        self.max_mut_space = max_mut_space
         self._n_pos = 0
         self._mut_space_size = 0
         self._score = 0.0
@@ -63,7 +59,7 @@ class Individual(AbstractIndividual):
         return self._graph.number_of_edges()
 
     def __repr__(self) -> str:
-        return f'Individual(num_genes={len(self.genes())}, num_pos={self.n_pos}, ' \
+        return f'GenericIndividual(num_genes={len(self.genes())}, num_pos={self.n_pos}, ' \
                f'score={self.score}, space_size={self.mut_space_size})'
 
     @property
@@ -81,6 +77,12 @@ class Individual(AbstractIndividual):
     @property
     def graph(self) -> nx.MultiGraph:
         return self._graph
+
+    @property
+    def ccs(self) -> t.Iterable[nx.MultiGraph]:
+
+        return (self._graph.subgraph(x) for x in nx.connected_components(
+            self._graph.edge_subgraph(self.strong_links())))
 
     def genes(self) -> t.List[Gene]:
         return [data['gene'] for _, _, data in self._graph.edges.data()]
@@ -109,16 +111,19 @@ class Individual(AbstractIndividual):
         return self._score
 
     def upd_mut_space_size(self) -> float:
-        ccs = (self._graph.subgraph(x) for x in nx.connected_components(
-            self._graph.edge_subgraph(self.strong_links())))
-        self._mut_space_size = sum(map(mut_space_size, ccs))
+        links = peekable(self.strong_links())
+        if not links.peek(0):
+            self._mut_space_size = 0
+            return 0
+        agg = max if self.max_mut_space else sum
+        self._mut_space_size = agg(map(mut_space_size, self.ccs))
         return self._mut_space_size
 
-    def upd(self) -> 'Individual':
+    def upd(self) -> 'GenericIndividual':
         self.upd_score(), self.upd_mut_space_size()
         return self
 
-    def remove_genes(self, genes: GenePool, update: bool = True) -> 'Individual':
+    def remove_genes(self, genes: GenePool, update: bool = True) -> 'GenericIndividual':
         graph_changed = False
         for g in genes:
             e = (g.P1, g.P2, g.A1 + g.A2)
@@ -129,7 +134,7 @@ class Individual(AbstractIndividual):
             return self.upd()
         return self
 
-    def add_genes(self, genes: GenePool, update: bool = True):
+    def add_genes(self, genes: GenePool, update: bool = True) -> 'GenericIndividual':
         graph_changed = reduce(op.and_, map(self.add_gene, genes))
         if graph_changed and update:
             return self.upd()
@@ -169,8 +174,8 @@ class Individual(AbstractIndividual):
         return False
 
 
-class AverageIndividual(Individual):
-    def upd_score(self) -> 'Individual':
+class AverageIndividual(GenericIndividual):
+    def upd_score(self) -> 'AverageIndividual':
         self._score = round(
             sum(mean(data['gene'].S for _, _, data in gg) for _, gg in groupby(
                 sorted(self._graph.edges.data(), key=lambda e: (e[0], e[1])),

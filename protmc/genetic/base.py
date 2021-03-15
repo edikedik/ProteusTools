@@ -1,7 +1,9 @@
 import typing as t
-from dataclasses import dataclass, field
-import pandas as pd
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass, field
+
+import networkx as nx
+import pandas as pd
 
 Gene = t.NamedTuple('Gene', [('P1', int), ('P2', int), ('A1', str), ('A2', str), ('S', float), ('C', float)])
 GenePool = t.Collection[Gene]
@@ -85,6 +87,11 @@ class ParsingParams:
 
 
 class AbstractIndividual(metaclass=ABCMeta):
+
+    @property
+    @abstractmethod
+    def graph(self) -> nx.MultiGraph:
+        pass
 
     @property
     @abstractmethod
