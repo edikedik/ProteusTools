@@ -43,6 +43,7 @@ def recombine_fractions(
 
 
 def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Record]], brood_size: int):
+    # TODO: this may violate structural constraints (1 weak edge per pair of nodes)
     ts = set(indiv.coupling_threshold for indiv, _ in mating_group)
     if len(ts) > 1:
         raise RuntimeError('...')
@@ -62,6 +63,7 @@ class Mutator:
         self.ps = ps
 
     def mutation(self, individual: GenericIndividual) -> GenericIndividual:
+        # TODO: consider using "buckets" of genes to finalize the current architecture
         num_mut = floor(len(individual) * self.mutable_fraction)
         if not num_mut:
             return individual
@@ -86,24 +88,6 @@ class Mutator:
     def __call__(self, individuals: t.List[GenericIndividual]) -> t.List[GenericIndividual]:
         mutators = [self._choose() for _ in range(len(individuals))]
         return [f(individual) for f, individual in zip(mutators, individuals)]
-
-
-class ProgressSaver(Callback):
-    def __init__(self, freq: int):
-        self.freq = freq
-        self.generation = 0
-        self.acc = []
-
-    def __call__(self, individuals: t.List[GenericIndividual], records: t.List[Record], operators: Operators) \
-            -> t.Tuple[t.List[GenericIndividual], t.List[Record], Operators]:
-        self.generation += 1
-        if self.generation % self.freq == 0:
-            scores = [r.score for r in records]
-            self.acc.append((
-                self.generation,
-                mean(scores),
-                max(scores)))
-        return individuals, records, operators
 
 
 class GA:
@@ -229,9 +213,9 @@ def _evolve_remote(
         callbacks: t.Optional[t.List[Callback]]) \
         -> t.Tuple[t.List[GenericIndividual], t.List[Record], t.Optional[t.List[Callback]], int]:
     gen = 0
-    stopping_counter = 0
-    stopping_previous = 0
-    stopping_func = {
+    counter = 0
+    previous = 0
+    selector = {
         'max': (lambda recs: max(r.score for r in recs)),
         'mean': (lambda recs: mean(r.score for r in recs))
     }[genetic_params.Early_Stopping.Selector]
@@ -242,14 +226,14 @@ def _evolve_remote(
         if callbacks:
             individuals, records, operators = evolver.call_callbacks(
                 callbacks, individuals, records, operators)
-        stopping_current = stopping_func(records)
-        if abs(stopping_current - stopping_previous) < genetic_params.Early_Stopping.ScoreImprovement:
-            stopping_counter += 1
-            if stopping_counter >= genetic_params.Early_Stopping.Rounds:
+        current = selector(records)
+        if current - previous < genetic_params.Early_Stopping.ScoreImprovement:
+            counter += 1
+            if counter >= genetic_params.Early_Stopping.Rounds:
                 return individuals, records, callbacks, gen
         else:
-            stopping_counter = 0
-            stopping_previous = stopping_current
+            counter = 0
+            previous = current
     return individuals, records, callbacks, gen
 
 
