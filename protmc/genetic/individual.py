@@ -123,7 +123,7 @@ class GenericIndividual(AbstractIndividual):
         self.upd_score(), self.upd_mut_space_size()
         return self
 
-    def remove_genes(self, genes: GenePool, update: bool = True) -> 'GenericIndividual':
+    def remove_genes(self, genes: t.Iterable[Gene], update: bool = True) -> 'GenericIndividual':
         graph_changed = False
         for g in genes:
             e = (g.P1, g.P2, g.A1 + g.A2)
@@ -134,7 +134,7 @@ class GenericIndividual(AbstractIndividual):
             return self.upd()
         return self
 
-    def add_genes(self, genes: GenePool, update: bool = True) -> 'GenericIndividual':
+    def add_genes(self, genes: t.Iterable[Gene], update: bool = True) -> 'GenericIndividual':
         graph_changed = reduce(op.and_, map(self.add_gene, genes))
         if graph_changed and update:
             return self.upd()

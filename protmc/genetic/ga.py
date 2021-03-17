@@ -1,7 +1,6 @@
 import typing as t
-from copy import deepcopy
 from functools import partial
-from itertools import chain
+from itertools import chain, groupby
 from math import floor
 from random import sample
 from statistics import mean
@@ -12,7 +11,7 @@ import numpy as np
 import ray
 from genetic.base import Operators, Callback
 from genetic.evolvers import GenericEvolver
-from more_itertools import random_permutation, distribute, unzip
+from more_itertools import random_permutation, distribute, unzip, partition, peekable, take
 from tqdm import tqdm
 
 from .base import Gene, GeneticParams, Record
@@ -20,37 +19,43 @@ from .individual import GenericIndividual
 from .score import score
 
 
-def recombine_fractions(
-        mating_group: t.List[t.Tuple[GenericIndividual, Record]], brood_size: int,
-        min_donate: float = 0.01, max_donate: float = 0.5):
-    def donate_genes(indiv: GenericIndividual):
-        indiv = deepcopy(indiv)
-        indiv_size = len(indiv)
-        num_donate = np.random.randint(
-            np.floor(min_donate * indiv_size), np.floor(max_donate * indiv_size))
-        donated = sample(indiv.genes(), num_donate)
-        indiv.remove_genes(donated, update=False)
-        return indiv, donated
+def filter_genes(genes: t.Iterable[Gene], coupling_threshold: float) -> t.Iterator[Gene]:
+    """
+    Filters `genes` so that a graph induced by them abides structural constraints.
+    """
 
-    def accept_donation(indiv: GenericIndividual, donation: t.Iterable[Gene]):
-        indiv.add_genes(donation)
-        return indiv
+    def process_group(genes_: t.Iterable[Gene]):
+        weak, strong = (partition(lambda g: g.C >= coupling_threshold, genes_))
+        strong = peekable(strong)
+        if strong.peek(None) is not None:
+            return strong
+        return take(1, weak)
 
-    individuals, donations = unzip(donate_genes(indiv) for indiv, _ in mating_group)
-    pool = random_permutation(chain(donations))
-    chunks = filter(bool, distribute(len(mating_group), pool))
-    return [accept_donation(indiv, chunk) for indiv, chunk in zip(individuals, chunks)]
+    groups = groupby(sorted(genes), lambda g: (g.P1, g.P2))
+    return chain.from_iterable(process_group(gg) for g, gg in groups)
 
 
-def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Record]], brood_size: int):
-    # TODO: this may violate structural constraints (1 weak edge per pair of nodes)
+def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
+                              brood_size: int) -> t.List[GenericIndividual]:
+    """
+    Combines genes of individuals in the `mating_group` in a single pool,
+    and uniformly divides these genes into `brood_size` number of individuals.
+    Offsprings will abide structural constraints.
+    :param mating_group: A group of individuals selected to give progeny.
+    :param brood_size: A number of offsprings.
+    :return: List of offsprings.
+    """
     ts = set(indiv.coupling_threshold for indiv, _ in mating_group)
     if len(ts) > 1:
-        raise RuntimeError('...')
+        raise RuntimeError(f'All Individuals in the mating group must have the same coupling threshold. Got {ts}')
     coupling_threshold = ts.pop()
+    ts = set(indiv.__class__ for indiv, _, in mating_group)
+    if len(ts) > 1:
+        raise RuntimeError(f'All Individuals in the mating group must be of a single type. Got {ts}')
+    ind_type = ts.pop()
     pool = random_permutation(chain.from_iterable(indiv.genes() for indiv, _ in mating_group))
-    chunks = distribute(brood_size, pool)
-    return [GenericIndividual(genes, coupling_threshold) for genes in chunks]
+    chunks = map(lambda chunk: filter_genes(chunk, coupling_threshold), distribute(brood_size, pool))
+    return [ind_type(list(genes), coupling_threshold) for genes in chunks]
 
 
 class Mutator:
@@ -63,7 +68,6 @@ class Mutator:
         self.ps = ps
 
     def mutation(self, individual: GenericIndividual) -> GenericIndividual:
-        # TODO: consider using "buckets" of genes to finalize the current architecture
         num_mut = floor(len(individual) * self.mutable_fraction)
         if not num_mut:
             return individual
