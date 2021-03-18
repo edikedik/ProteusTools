@@ -46,14 +46,17 @@ def mut_space_size(graph: nx.MultiGraph, estimate=True) -> int:
 
 class GenericIndividual(AbstractIndividual):
     # multiple strong links, single weak link
-    def __init__(self, genes: GenePool, coupling_threshold: float = 0, max_mut_space: bool = True):
-        self._graph = genes2light_graph(genes, coupling_threshold)
+    def __init__(self, genes: t.Optional[GenePool], coupling_threshold: float = 0, max_mut_space: bool = True,
+                 graph: t.Optional[nx.Graph] = None, upd_immediately: bool = True):
+        if not (genes or graph):
+            raise ValueError('Nothing to init from')
+        self._graph = graph or genes2light_graph(genes, coupling_threshold)
         self.coupling_threshold = coupling_threshold
         self.max_mut_space = max_mut_space
-        self._n_pos = 0
         self._mut_space_size = 0
         self._score = 0.0
-        self.upd()
+        if upd_immediately:
+            self.upd()
 
     def __len__(self) -> int:
         return self._graph.number_of_edges()
@@ -61,6 +64,12 @@ class GenericIndividual(AbstractIndividual):
     def __repr__(self) -> str:
         return f'GenericIndividual(num_genes={len(self.genes())}, num_pos={self.n_pos}, ' \
                f'score={self.score}, space_size={self.mut_space_size})'
+
+    def copy(self) -> 'GenericIndividual':
+        new = GenericIndividual(None, self.coupling_threshold, self.max_mut_space, self._graph.copy(), False)
+        new.set_mut_space_size(self._mut_space_size)
+        new.set_score(self._score)
+        return new
 
     @property
     def n_pos(self) -> int:
@@ -70,9 +79,17 @@ class GenericIndividual(AbstractIndividual):
     def mut_space_size(self) -> float:
         return self._mut_space_size
 
+    def set_mut_space_size(self, value: float):
+        """Exists for lighter copying"""
+        self._mut_space_size = value
+
     @property
     def score(self) -> float:
         return self._score
+
+    def set_score(self, value: float):
+        """Exists for lighter copying"""
+        self._score = value
 
     @property
     def graph(self) -> nx.MultiGraph:
@@ -80,9 +97,9 @@ class GenericIndividual(AbstractIndividual):
 
     @property
     def ccs(self) -> t.Iterable[nx.MultiGraph]:
-
-        return (self._graph.subgraph(x) for x in nx.connected_components(
-            self._graph.edge_subgraph(self.strong_links())))
+        """Connected components of the subgraph induced by the strong links"""
+        induced_graph = self._graph.edge_subgraph(self.strong_links())
+        return (induced_graph.subgraph(x) for x in nx.connected_components(induced_graph))
 
     def genes(self) -> t.List[Gene]:
         return [data['gene'] for _, _, data in self._graph.edges.data()]
