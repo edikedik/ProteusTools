@@ -152,6 +152,9 @@ class GenericIndividual(AbstractIndividual):
         return self
 
     def add_genes(self, genes: t.Iterable[Gene], update: bool = True) -> 'GenericIndividual':
+        genes = peekable(genes)
+        if not genes.peek(0):
+            return self
         graph_changed = reduce(op.and_, map(self.add_gene, genes))
         if graph_changed and update:
             return self.upd()
