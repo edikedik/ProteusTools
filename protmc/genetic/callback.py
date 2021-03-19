@@ -85,5 +85,20 @@ class UniqueGeneCounter(Accumulator):
         return individuals, records, operators
 
 
+class BestKeeper(Callback):
+    def __init__(self, agg_func=max):
+        self.key = agg_func
+        self.generation: int = 0
+        self.chosen_one: t.Optional[t.Tuple[GenericIndividual, Record]] = None
+
+    def __call__(self, individuals: t.List[GenericIndividual], records: t.List[Record], operators: Operators) \
+            -> t.Tuple[t.List[GenericIndividual], t.List[Record], Operators]:
+        self.generation += 1
+        current_best = max(zip(individuals, records), key=lambda x: x[1].score)
+        if self.chosen_one is None or current_best[1].score > self.chosen_one[1].score:
+            self.chosen_one = current_best
+        return individuals, records, operators
+
+
 if __name__ == '__main__':
     raise RuntimeError
