@@ -45,12 +45,14 @@ class GeneticParams:
     Brood_size: int = 1
     Number_of_mates: int = 2
     Mutable_fraction: float = 0.1
+    Use_BucketMutator: bool = False
     Deletion_size: int = 1
     Acquisition_size: int = 1
     Probabilities: t.Tuple[float, float, float] = (0.6, 0.2, 0.2)
     Tournaments_selection: int = 20
     Tournaments_policy: int = 20
     Early_Stopping: EarlyStopping = EarlyStopping(50, 0.5, 'max')
+    Max_mut_space: bool = True
 
 
 @dataclass
