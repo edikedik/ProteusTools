@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from protmc.genetic.base import Gene, GenePool
-from protmc.genetic.individual import Individual, AverageIndividual, AverageFlexibleIndividual
+from protmc.genetic.individual import GenericIndividual, AverageIndividual
 
 
 def generate_genes(
@@ -30,24 +30,24 @@ def random_genes():
 
 
 @pytest.fixture()
-def random_individual() -> Individual:
-    return Individual(generate_genes())
+def random_individual() -> GenericIndividual:
+    return GenericIndividual(generate_genes())
 
 
 @pytest.fixture()
-def strongly_linked_individual() -> Individual:
+def strongly_linked_individual() -> GenericIndividual:
     threshold = np.random.uniform(0.1, 0.9)
-    return Individual(generate_genes(coupling_min=threshold + 0.05), coupling_threshold=threshold)
+    return GenericIndividual(generate_genes(coupling_min=threshold + 0.05), coupling_threshold=threshold)
 
 
 @pytest.fixture()
-def weakly_linked_individual() -> Individual:
+def weakly_linked_individual() -> GenericIndividual:
     threshold = np.random.uniform(0.1, 0.9)
-    return Individual(generate_genes(coupling_max=threshold), coupling_threshold=threshold)
+    return GenericIndividual(generate_genes(coupling_max=threshold), coupling_threshold=threshold)
 
 
 def test_basic_init(random_genes):
-    individual = Individual(random_genes)
+    individual = GenericIndividual(random_genes)
     # since coupling threshold is zero, all genes must be "strong"
     gene_set = set((g.P1, g.P2, g.A1 + g.A2) for g in random_genes)
     assert len(individual.genes()) == len(gene_set)
@@ -56,7 +56,7 @@ def test_basic_init(random_genes):
 
     coupling_threshold = median(g.C for g in random_genes)
     strong_genes = set((g.P1, g.P2, g.A1 + g.A2) for g in random_genes if g.C >= coupling_threshold)
-    individual = Individual(random_genes, coupling_threshold)
+    individual = GenericIndividual(random_genes, coupling_threshold)
     assert len(individual.genes()) != len(gene_set)
     assert len(list(individual.strong_links())) != len(gene_set)
     assert len(list(individual.weak_links())) != 0
@@ -94,13 +94,13 @@ def test_score(random_genes):
             genes.append(g)
     genes = sorted(genes)
     # No threshold
-    individual = Individual(genes, 0)
+    individual = GenericIndividual(genes, 0)
     assert individual.score == round(sum(g.S for g in genes), 4)
 
     # Introduce threshold
     coupling_threshold = median(g.C for g in genes)
     strong_genes_score = round(sum(g.S for g in genes if g.C >= coupling_threshold), 4)
-    individual = Individual(genes, coupling_threshold)
+    individual = GenericIndividual(genes, coupling_threshold)
     strong_genes_score_ = round(sum(individual.graph.edges[e]['gene'].S for e in individual.strong_links()), 4)
     assert strong_genes_score == strong_genes_score_
     score = individual.score
@@ -120,20 +120,23 @@ def test_mut_space():
     genes = [Gene(1, 2, 'A', 'B', 0.5, 1.0), Gene(1, 2, 'A', 'C', 1.5, 1.0),
              Gene(2, 3, 'A', 'B', 0.5, 0.1), Gene(3, 4, 'B', 'B', 0.5, 1.0)]
     # 1 - A, 2 - ABC, 3 - B, 4 - B
-    individual = Individual(genes)
+    individual = GenericIndividual(genes)
     assert individual.mut_space_size == 3 * log(1) + log(3)
     # 1 - A, 2 - BC, 3 - B, 4 - B
-    individual = Individual(genes, 0.2)
+    individual = GenericIndividual(genes, 0.2)
     assert individual.mut_space_size == 3 * log(1) + log(2)
-    individual = Individual(genes, 10)
+    individual = GenericIndividual(genes, 10)
     assert individual.mut_space_size == 0
+    # Adding a weak link into one of the induced subgraphs does not change the outcome
+    individual = GenericIndividual(genes + [Gene(1, 2, 'A', 'B', 0.5, 0.1)], 0.2)
+    assert individual.mut_space_size == 3 * log(1) + log(2)
 
 
 def test_add_genes():
     # No coupling threshold
     genes = [Gene(1, 2, 'A', 'B', 0.5, 1.0), Gene(1, 2, 'A', 'C', 1.5, 1.0), Gene(2, 3, 'A', 'B', 0.5, 0.1)]
     scores = sum(g.S for g in genes)
-    individual = Individual(genes)
+    individual = GenericIndividual(genes)
     # Such edge exists -> nothing added
     individual.add_gene(Gene(1, 2, 'A', 'B', 100, 100))
     assert individual.score == scores
@@ -151,7 +154,7 @@ def test_add_genes():
     assert individual.score == scores + 3
 
     # Introduce coupling threshold
-    individual = Individual(genes, 0.2)
+    individual = GenericIndividual(genes, 0.2)
     # Both edges sequentially replace the weak edge
     individual.add_genes([Gene(2, 3, 'A', 'C', 1.0, 0.1), Gene(2, 3, 'A', 'D', 1.0, 1.0)])
     # -> the total number of edges remains the same
@@ -172,5 +175,3 @@ def test_add_genes():
     assert len(edges) == 3
     assert 'AD' in edges
     assert 'AE' not in edges
-
-    individual = AverageFlexibleIndividual(genes, 0.2)
