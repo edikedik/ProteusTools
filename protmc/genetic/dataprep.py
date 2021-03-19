@@ -38,6 +38,11 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
         raise TypeError('Unsupported type of the `Results` attribute')
     logging.info(f'Read initial DataFrame with {len(df)} (non-NaN) records')
 
+    # Which positions were already present? We must know before any filtering
+    pos_covered = set(df[cols.pos])
+    if params.Exclude_pairs is not None:
+        pos_covered |= {f'{p1}-{p2}' for p1, p2 in params.Exclude_pairs}
+
     # Map protonation states to single types
     def map_proto_states(seq: str) -> str:
         proto_map = AminoAcidDict().proto_mapping
@@ -78,11 +83,6 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
             warn('No singletons; check the input table with the results')
             df = pairs
         else:
-            # Which positions were already present?
-            pos_covered = set(df[cols.pos])
-            if params.Exclude_pairs is not None:
-                pos_covered |= {f'{p1}-{p2}' for p1, p2 in params.Exclude_pairs}
-            pairs_covered = {(pos, aa) for _, pos, aa in pairs[[cols.pos, cols.seq_subset]].itertuples()}
             derived_pairs = pd.DataFrame(  # Wrap into df
                 filterfalse(  # Leave only new pairs
                     lambda r: r[0] in pos_covered,

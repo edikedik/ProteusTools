@@ -22,7 +22,7 @@ def gaussian_penalty(x: float, x_peak: float, sigma: float):
 
 
 def sigma_helper(desired_penalty: float, deviation: float):
-    return (-deviation ** 2 / (2 * np.log(desired_penalty))) ** 1/2
+    return (-deviation ** 2 / (2 * np.log(desired_penalty))) ** 1 / 2
 
 
 def score(indiv: AbstractIndividual,

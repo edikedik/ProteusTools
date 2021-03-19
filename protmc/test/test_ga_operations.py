@@ -6,8 +6,9 @@ from more_itertools import distribute, partition
 
 from protmc.genetic import Gene, GenericIndividual
 from protmc.genetic.base import Record
-from protmc.genetic.ga import recombine_genes_uniformly, exchange_fraction
+from protmc.genetic.crossover import exchange_fraction, recombine_genes_uniformly
 from protmc.genetic.mutator import Mutator, BucketMutator
+from .fixtures import random_genes
 
 
 def test_mutator(random_genes):

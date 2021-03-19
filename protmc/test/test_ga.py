@@ -3,7 +3,7 @@ from more_itertools import take
 from protmc.genetic.base import GeneticParams
 from protmc.genetic.ga import GA
 from protmc.genetic.individual import GenericIndividual
-from .test_individual import generate_genes
+from .fixtures import generate_genes
 
 
 def test_ga():
