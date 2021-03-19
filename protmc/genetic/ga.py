@@ -64,8 +64,11 @@ class GA:
         self.populations = populations
         self.records = records
 
-    def spawn_populations(self, n: int, overwrite: bool = True, individual_type=GenericIndividual):
-        populations = ray.get([_spawn_remote.remote(self.genetic_params, individual_type) for _ in range(n)])
+    def spawn_populations(self, n: int, overwrite: bool = True, individual_type=GenericIndividual,
+                          from_strong_edges: bool = True) -> t.List[t.List[GenericIndividual]]:
+        pool = ([g for g in self.genetic_params.Gene_pool if g.C >= self.genetic_params.Coupling_threshold]
+                if from_strong_edges else None)
+        populations = ray.get([_spawn_remote.remote(self.genetic_params, individual_type, pool) for _ in range(n)])
         if overwrite:
             self.populations, self.records = populations, None
         return populations
@@ -159,10 +162,10 @@ class GA:
 
 
 @ray.remote
-def _spawn_remote(genetic_params: GeneticParams, individual_type):
+def _spawn_remote(genetic_params: GeneticParams, individual_type, pool=None):
     return [
         individual_type(
-            sample(genetic_params.Gene_pool, genetic_params.Individual_base_size),
+            sample(pool or genetic_params.Gene_pool, genetic_params.Individual_base_size),
             genetic_params.Coupling_threshold, genetic_params.Max_mut_space)
         for _ in range(genetic_params.Population_size)]
 

@@ -2,7 +2,7 @@ import typing as t
 from itertools import chain, groupby, tee
 from math import floor
 
-from more_itertools import random_permutation, partition, peekable, take, distribute
+from more_itertools import random_permutation, partition, peekable, take, distribute, unzip
 
 from .base import Gene, Record
 from .individual import GenericIndividual
@@ -62,6 +62,13 @@ def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Re
 
 def recombine_into(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
                    brood_size: int) -> t.List[GenericIndividual]:
+    """
+    Take all genes and distribute them into progeny.
+    For two individuals with N genes and `brood_size=1`, the single offspring will have 2N genes.
+    :param mating_group: A group of individuals selected to give progeny.
+    :param brood_size: A number of offsprings.
+    :return: List of offsprings.
+    """
     coupling_threshold, ind_type, max_space = _check_mating_group(mating_group)
     pool = random_permutation(chain.from_iterable(indiv.genes() for indiv, _ in mating_group))
     chunks = distribute(brood_size, pool)
@@ -70,8 +77,15 @@ def recombine_into(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
 
 def exchange_fraction(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
                       brood_size: int, fraction: float) -> t.List[GenericIndividual]:
-    if brood_size > len(mating_group):
-        raise ValueError(f'Brood size {brood_size} cannot be larger than the mating group {len(mating_group)}')
+    """
+    Takes `fraction` of genes from each Individual.
+    Aggregates all taken fractions into a single pool.
+    Samples from the pool the same number of genes an Individual has donated.
+    :param mating_group: A group of individuals selected to give progeny.
+    :param brood_size: A number of offsprings.
+    :param fraction: A fraction of genes to take from an Individual.
+    :return: List of offsprings.
+    """
     staged_comb, staged_pool = tee(((ind, floor(len(ind) * fraction)) for ind, _ in mating_group), 2)
     pool_samples, samples = tee((take(n, ind.genes()) for ind, n in staged_pool), 2)
     pool = random_permutation(chain.from_iterable(pool_samples))
@@ -79,3 +93,19 @@ def exchange_fraction(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
         ind.copy().remove_genes(s).add_genes(take(n, pool))
         for (ind, n), s in zip(staged_comb, samples))
     return list(take(brood_size, recombined))
+
+
+def take_unchanged(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
+                   brood_size: int) -> t.List[GenericIndividual]:
+    """
+    Randomly takes `brood_size` number of individuals from the mating groups.
+    :param mating_group: A group of individuals selected to give progeny.
+    :param brood_size: A number of offsprings.
+    :return: List of offsprings.
+    """
+    individuals, _ = unzip(mating_group)
+    return list(take(brood_size, random_permutation(individuals)))
+
+
+if __name__ == '__main__':
+    raise RuntimeError

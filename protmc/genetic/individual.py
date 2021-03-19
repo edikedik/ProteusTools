@@ -1,7 +1,7 @@
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import chain, groupby, tee
+from itertools import chain, groupby, tee, starmap
 from math import log
 from statistics import mean
 
@@ -14,28 +14,6 @@ from .base import Gene, MultiGraphEdge, AbstractIndividual, GenePool
 # TODO: don't forget to state the assumption that gene.P1 < gene.P2
 
 
-def genes2graph(genes: t.Collection[Gene]) -> nx.MultiGraph:
-    graph = nx.MultiGraph()
-    for g in genes:
-        graph.add_edge(g.P1, g.P2, key=g.A1 + g.A2, gene=g)
-    return graph
-
-
-def genes2light_graph(genes: t.Collection[Gene], coupling_threshold: float) -> nx.MultiGraph:
-    graph = nx.MultiGraph()
-    strong_genes = (g for g in genes if g.C >= coupling_threshold)
-    weak_genes = (g for g in genes if g.C < coupling_threshold)
-    for g in strong_genes:
-        graph.add_edge(g.P1, g.P2, g.A1 + g.A2, gene=g)
-    for g in weak_genes:
-        if g.P1 in graph and g.P2 in graph[g.P1]:
-            if len(graph[g.P1][g.P2]) == 0:
-                graph.add_edge(g.P1, g.P2, g.A1 + g.A2, gene=g)
-        else:
-            graph.add_edge(g.P1, g.P2, g.A1 + g.A2, gene=g)
-    return graph
-
-
 def mut_space_size(graph: nx.MultiGraph, estimate=True) -> int:
     xs = sorted(chain.from_iterable(((fr, key[0]), (to, key[1])) for fr, to, key in graph.edges))
     gs = (len(set(g)) for _, g in groupby(xs, key=op.itemgetter(0)))
@@ -44,13 +22,66 @@ def mut_space_size(graph: nx.MultiGraph, estimate=True) -> int:
     return reduce(op.mul, gs)
 
 
+def add_gene(gene: Gene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
+    if gene.C >= coupling_threshold:
+        return add_strong_gene(gene, graph, coupling_threshold)
+    return add_weak_gene(gene, graph)
+
+
+def get_node_space(graph, node):
+    adj_keys = chain.from_iterable(
+        ((k, n) for k in v) for n, v in graph[node].items())
+    return (k[0] if n > node else k[1] for k, n in adj_keys)
+
+
+def add_strong_gene(gene: Gene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
+    key = gene.A1 + gene.A2
+    edge = (gene.P1, gene.P2, key)
+    if not graph.has_edge(gene.P1, gene.P2):
+        graph.add_edge(*edge, gene=gene)
+        return True
+    keys = graph[gene.P1][gene.P2]
+    if key in keys:
+        return False
+    if len(keys) > 1:
+        graph.add_edge(*edge, gene=gene)
+        return True
+    if graph[gene.P1][gene.P2][next(iter(keys))]['gene'].C < coupling_threshold:
+        graph.remove_edge(gene.P1, gene.P2, next(iter(keys)))
+    graph.add_edge(*edge, gene=gene)
+    return True
+
+
+def add_weak_gene(gene: Gene, graph: nx.MultiGraph) -> bool:
+    key = gene.A1 + gene.A2
+    edge = (gene.P1, gene.P2, key)
+    if any(starmap(
+            lambda p, a: p in graph and not any(x == a for x in get_node_space(graph, p)),
+            [(gene.P1, gene.A1), (gene.P2, gene.A2)])):
+        return False
+    if graph.has_edge(gene.P1, gene.P2):
+        keys = graph[gene.P1][gene.P2]
+        if len(keys) > 1:
+            return False
+        graph.remove_edge(gene.P1, gene.P2, next(iter(keys)))
+    graph.add_edge(*edge, gene=gene)
+    return True
+
+
+def genes2_graph(genes: t.Collection[Gene], coupling_threshold: float) -> nx.MultiGraph:
+    graph = nx.MultiGraph()
+    for gene in genes:
+        add_gene(gene, graph, coupling_threshold)
+    return graph
+
+
 class GenericIndividual(AbstractIndividual):
     # multiple strong links, single weak link
     def __init__(self, genes: t.Optional[GenePool], coupling_threshold: float = 0, max_mut_space: bool = True,
                  graph: t.Optional[nx.Graph] = None, upd_immediately: bool = True):
         if not (genes or graph):
             raise ValueError('Nothing to init from')
-        self._graph = graph or genes2light_graph(genes, coupling_threshold)
+        self._graph = graph or genes2_graph(genes, coupling_threshold)
         self.coupling_threshold = coupling_threshold
         self.max_mut_space = max_mut_space
         self._mut_space_size = 0
@@ -160,38 +191,8 @@ class GenericIndividual(AbstractIndividual):
             return self.upd()
         return self
 
-    def add_gene(self, g: Gene) -> bool:
-        e = (g.P1, g.P2, g.A1 + g.A2)
-        is_strong = g.C >= self.coupling_threshold
-        if e not in self._graph.edges:
-            if g.P1 in self._graph and g.P2 in self._graph[g.P1]:
-                if len(self._graph[g.P1][g.P2]) == 0:
-                    # No edges between two nodes -> add edge
-                    self._graph.add_edge(*e, gene=g)
-                    return True
-                elif len(self._graph[g.P1][g.P2]) == 1:
-                    key = list(self._graph[g.P1][g.P2])[0]
-                    is_also_strong = self._graph[g.P1][g.P2][key]['gene'].C >= self.coupling_threshold
-                    if is_strong and is_also_strong:
-                        # If both are strong, add edge
-                        self._graph.add_edge(*e, gene=g)
-                        return True
-                    else:
-                        # Whatever the edge is -- replace it
-                        self._graph.remove_edge(g.P1, g.P2, key)
-                        self._graph.add_edge(*e, gene=g)
-                        return True
-                    # Otherwise, nothing to do
-                elif is_strong:
-                    # Assume that multiple edges imply all strong connections
-                    # Hence, we add one more strong connection
-                    self._graph.add_edge(*e, gene=g)
-                    return True
-            else:
-                # At least one of the nodes is not present -> add edge
-                self._graph.add_edge(*e, gene=g)
-                return True
-        return False
+    def add_gene(self, gene: Gene) -> bool:
+        return add_gene(gene, self.graph, self.coupling_threshold)
 
 
 class AverageIndividual(GenericIndividual):
@@ -205,42 +206,7 @@ class AverageIndividual(GenericIndividual):
 
 
 class AverageFlexibleIndividual(AverageIndividual):
-
-    def add_gene(self, g: Gene) -> bool:
-        e = (g.P1, g.P2, g.A1 + g.A2)
-        is_strong = g.C >= self.coupling_threshold
-        if e not in self._graph.edges:
-            if g.P1 in self._graph and g.P2 in self._graph[g.P1]:
-                if len(self._graph[g.P1][g.P2]) == 0:
-                    # No edges between two nodes -> add edge
-                    self._graph.add_edge(*e, gene=g)
-                    return True
-                elif len(self._graph[g.P1][g.P2]) == 1:
-                    key = list(self._graph[g.P1][g.P2])[0]
-                    is_also_strong = self._graph[g.P1][g.P2][key]['gene'].C >= self.coupling_threshold
-                    if is_strong and is_also_strong:
-                        # if both are strong, add edge
-                        self._graph.add_edge(*e, gene=g)
-                        return True
-                    else:
-                        # If the edge is weak -- replace it
-                        self._graph.remove_edge(g.P1, g.P2, key)
-                        self._graph.add_edge(*e, gene=g)
-                        return True
-                    # Otherwise, nothing to do
-                else:
-                    # Assume that multiple edges imply all strong connections
-                    scores = tee(v['gene'].S for v in self._graph[g.P1][g.P2].values())
-                    average_score = mean(scores[0])
-                    max_score = max(scores[1])
-                    if g.S > average_score and g.S > max_score:
-                        self._graph.add_edge(*e, gene=g)
-                        return True
-            else:
-                # At least one of the nodes is not present -> add edge
-                self._graph.add_edge(*e, gene=g)
-                return True
-        return False
+    pass
 
 
 if __name__ == '__main__':
