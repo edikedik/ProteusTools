@@ -29,7 +29,7 @@ def score(indiv: AbstractIndividual,
           min_size: int = 10, max_size: int = 100,
           pen_mut: bool = True, sigma_mut: float = 5, desired_space: float = 5 * np.log(18),
           pen_pos: bool = False, sigma_pos: float = 10, desired_pos: int = 4,
-          expose: bool = False) -> float:
+          expose: bool = False, penalize_lower: bool = False) -> float:
     """
     Compute the score (fitness) of the individual.
     The score's base value is the sum of gene scores weighted by the gaussian penalty for deviation from
@@ -45,6 +45,7 @@ def score(indiv: AbstractIndividual,
     :param sigma_pos: Standard deviation (see `gaussian_penalty` docs).
     :param desired_pos: Desired number of unique positions within `indiv`
     :param expose: If true print (base_score, duplication_penalty, mut_space_penalty, num_pos_penalty).
+    :param penalize_lower: If true, penalize deviations symmetrically around the desired number.
     :return: A score capturing how well individual meets our expectations.
     Specifically, with the default weights, the best individual is has no duplicate genes, has
     mutation space size as close to `desired_space` as possible,
@@ -56,13 +57,13 @@ def score(indiv: AbstractIndividual,
 
     s = indiv.score
 
-    if pen_mut:
+    if pen_mut and (penalize_lower or (not penalize_lower and indiv.mut_space_size > desired_space)):
         mutation_space_penalty = gaussian_penalty(
             indiv.mut_space_size, desired_space, sigma_mut)
     else:
         mutation_space_penalty = 1.0
 
-    if pen_pos:
+    if pen_pos and (penalize_lower or (not penalize_lower and indiv.n_pos > desired_pos)):
         num_pos_penalty = gaussian_penalty(indiv.n_pos, desired_pos, sigma_pos)
     else:
         num_pos_penalty = 1.0
