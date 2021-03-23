@@ -28,7 +28,7 @@ class Mutator:
             return individual
         del_genes = sample(individual.genes(), num_mut)
         new_genes = sample(self.pool, num_mut)
-        return individual.remove_genes(del_genes, update=False).add_genes(new_genes)
+        return individual.remove_genes(del_genes).add_genes(new_genes)
 
     def deletion(self, individual: GenericIndividual) -> GenericIndividual:
         if self.copy:
