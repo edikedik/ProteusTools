@@ -48,7 +48,7 @@ class GeneticParams:
     Use_BucketMutator: bool = False
     Deletion_size: int = 1
     Acquisition_size: int = 1
-    Probabilities: t.Tuple[float, float, float] = (0.6, 0.2, 0.2)
+    Probabilities: t.Tuple[float, float, float] = (0.0, 0.5, 0.5)
     Tournaments_selection: int = 20
     Tournaments_policy: int = 20
     Early_Stopping: EarlyStopping = EarlyStopping(50, 0.5, 'max')

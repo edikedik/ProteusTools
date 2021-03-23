@@ -1,27 +1,11 @@
 import typing as t
-from itertools import chain, groupby, tee
+from itertools import chain, tee
 from math import floor
 
-from more_itertools import random_permutation, partition, peekable, take, distribute, unzip
+from more_itertools import random_permutation, take, distribute, unzip
 
-from .base import Gene, Record
+from .base import Record
 from .individual import GenericIndividual
-
-
-def filter_genes(genes: t.Iterable[Gene], coupling_threshold: float) -> t.Iterator[Gene]:
-    """
-    Filters `genes` so that a graph induced by them abides structural constraints.
-    """
-
-    def process_group(genes_: t.Iterable[Gene]):
-        weak, strong = (partition(lambda g: g.C >= coupling_threshold, genes_))
-        strong = peekable(strong)
-        if strong.peek(None) is not None:
-            return strong
-        return take(1, weak)
-
-    groups = groupby(sorted(genes), lambda g: (g.P1, g.P2))
-    return chain.from_iterable(process_group(gg) for g, gg in groups)
 
 
 def _check_mating_group(mating_group: t.List[t.Tuple[GenericIndividual, Record]]):
@@ -76,7 +60,7 @@ def recombine_into(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
 
 
 def exchange_fraction(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
-                      brood_size: int, fraction: float) -> t.List[GenericIndividual]:
+                      brood_size: int, fraction: float = 0.1) -> t.List[GenericIndividual]:
     """
     Takes `fraction` of genes from each Individual.
     Aggregates all taken fractions into a single pool.
