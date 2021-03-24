@@ -24,9 +24,13 @@ def _check_mating_group(mating_group: t.List[t.Tuple[GenericIndividual, Record]]
     max_spaces = set(indiv.max_mut_space for indiv, _ in mating_group)
     if len(max_spaces) > 1:
         raise RuntimeError(f'Multiple values of `max_mut_space` attribute in the mating group.')
-    # Perform the recombination
     max_space = max_spaces.pop()
-    return coupling_threshold, ind_type, max_space
+    max_poss = set(indiv.max_num_positions for indiv, _ in mating_group)
+    if len(max_spaces) > 1:
+        raise RuntimeError(f'Multiple values of `max_num_pos` attribute in the mating group.')
+    # Perform the recombination
+    max_pos = max_poss.pop()
+    return coupling_threshold, ind_type, max_space, max_pos
 
 
 def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
@@ -38,10 +42,10 @@ def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Re
     :param brood_size: A number of offsprings.
     :return: List of offsprings.
     """
-    coupling_threshold, ind_type, max_space = _check_mating_group(mating_group)
+    coupling_threshold, ind_type, max_space, max_pos = _check_mating_group(mating_group)
     pool = random_permutation(chain.from_iterable(indiv.genes() for indiv, _ in mating_group))
     chunks = take(brood_size, distribute(len(mating_group), pool))
-    return [ind_type(list(genes), coupling_threshold, max_space) for genes in chunks]
+    return [ind_type(list(genes), coupling_threshold, max_space, max_pos) for genes in chunks]
 
 
 def recombine_into(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
@@ -53,10 +57,10 @@ def recombine_into(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
     :param brood_size: A number of offsprings.
     :return: List of offsprings.
     """
-    coupling_threshold, ind_type, max_space = _check_mating_group(mating_group)
+    coupling_threshold, ind_type, max_space, max_pos = _check_mating_group(mating_group)
     pool = random_permutation(chain.from_iterable(indiv.genes() for indiv, _ in mating_group))
     chunks = distribute(brood_size, pool)
-    return [ind_type(list(genes), coupling_threshold, max_space) for genes in chunks]
+    return [ind_type(list(genes), coupling_threshold, max_space, max_pos) for genes in chunks]
 
 
 def exchange_fraction(mating_group: t.List[t.Tuple[GenericIndividual, Record]],

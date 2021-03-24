@@ -167,7 +167,7 @@ def _spawn_remote(genetic_params: GeneticParams, individual_type, pool=None):
     return [
         individual_type(
             sample(pool or genetic_params.Gene_pool, genetic_params.Individual_base_size),
-            genetic_params.Coupling_threshold, genetic_params.Max_mut_space)
+            genetic_params.Coupling_threshold, genetic_params.Max_mut_space, genetic_params.Max_num_pos)
         for _ in range(genetic_params.Population_size)]
 
 

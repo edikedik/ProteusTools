@@ -54,6 +54,7 @@ class GeneticParams:
     Tournaments_policy: int = 20
     Early_Stopping: EarlyStopping = EarlyStopping(50, 0.5, 'max')
     Max_mut_space: bool = True
+    Max_num_pos: bool = False
 
 
 @dataclass

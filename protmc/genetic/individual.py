@@ -77,15 +77,18 @@ def genes2_graph(genes: t.Collection[Gene], coupling_threshold: float) -> nx.Mul
 
 class GenericIndividual(AbstractIndividual):
     # multiple strong links, single weak link
-    def __init__(self, genes: t.Optional[GenePool], coupling_threshold: float = 0, max_mut_space: bool = True,
+    def __init__(self, genes: t.Optional[GenePool], coupling_threshold: float = 0,
+                 max_mut_space: bool = True, max_num_positions: bool = False,
                  graph: t.Optional[nx.Graph] = None, upd_immediately: bool = True):
         if not (genes or graph):
             raise ValueError('Nothing to init from')
         self._graph = graph or genes2_graph(genes, coupling_threshold)
         self.coupling_threshold = coupling_threshold
         self.max_mut_space = max_mut_space
+        self.max_num_positions = max_num_positions
         self._mut_space_size = 0
         self._score = 0.0
+        self._n_pos = 0
         if upd_immediately:
             self.upd()
 
@@ -97,20 +100,26 @@ class GenericIndividual(AbstractIndividual):
                f'score={self.score}, space_size={self.mut_space_size})'
 
     def copy(self) -> 'GenericIndividual':
-        new = GenericIndividual(None, self.coupling_threshold, self.max_mut_space, self._graph.copy(), False)
-        new.set_mut_space_size(self._mut_space_size)
-        new.set_score(self._score)
+        # Mutable graph object is the only one requiring explicit copying
+        new = GenericIndividual(None, self.coupling_threshold, self.max_mut_space, self.max_num_positions,
+                                self._graph.copy(), False)
+        new._set_mut_space_size(self._mut_space_size)
+        new._set_score(self._score)
+        new._set_n_pos(self._n_pos)
         return new
 
     @property
     def n_pos(self) -> int:
-        return len(self._graph)
+        return self._n_pos
+
+    def _set_n_pos(self, value: int):
+        self._n_pos = value
 
     @property
     def mut_space_size(self) -> float:
         return self._mut_space_size
 
-    def set_mut_space_size(self, value: float):
+    def _set_mut_space_size(self, value: float):
         """Exists for lighter copying"""
         self._mut_space_size = value
 
@@ -118,7 +127,7 @@ class GenericIndividual(AbstractIndividual):
     def score(self) -> float:
         return self._score
 
-    def set_score(self, value: float):
+    def _set_score(self, value: float):
         """Exists for lighter copying"""
         self._score = value
 
@@ -167,8 +176,13 @@ class GenericIndividual(AbstractIndividual):
         self._mut_space_size = agg(map(mut_space_size, self.ccs))
         return self._mut_space_size
 
+    def upd_n_pos(self) -> int:
+        agg = max if self.max_num_positions else sum
+        self._n_pos = agg(map(len, nx.connected_components(self.graph)))
+        return self._n_pos
+
     def upd(self) -> 'GenericIndividual':
-        self.upd_score(), self.upd_mut_space_size()
+        self.upd_score(), self.upd_mut_space_size(), self.upd_n_pos()
         return self
 
     def remove_genes(self, genes: t.Iterable[Gene], update: bool = True) -> 'GenericIndividual':
