@@ -13,7 +13,7 @@ from more_itertools import unzip
 from tqdm import tqdm
 
 from .base import GeneticParams, Record
-from .crossover import recombine_genes_uniformly
+from .crossover import recombine_genes_uniformly, take_unchanged
 from .individual import GenericIndividual
 from .mutator import Mutator, BucketMutator
 from .score import score
@@ -23,6 +23,7 @@ class GA:
     def __init__(self, genetic_params: GeneticParams,
                  populations: t.Optional[t.List[t.List[GenericIndividual]]] = None,
                  records: t.Optional[t.List[t.List[Record]]] = None):
+        crossovers = {'recombine_genes_uniformly': recombine_genes_uniformly, 'take_unchanged': take_unchanged}
         self.genetic_params = genetic_params
 
         # Setup helpers for operators
@@ -33,7 +34,7 @@ class GA:
             ops.ktournament, genetic_params.Tournaments_selection, lambda x: x.score,
             genetic_params.Number_of_mates, replace=True)
         self.policy_fn = partial(ops.ktournament, genetic_params.Tournaments_policy, lambda x: x.score)
-        self.crossover_fn = partial(recombine_genes_uniformly, brood_size=genetic_params.Brood_size)
+        self.crossover_fn = partial(crossovers[genetic_params.Crossover_mode], brood_size=genetic_params.Brood_size)
 
         # Setup operators
         self._estimator = ops.GenericEstimator(func=self.score_func)
@@ -49,10 +50,10 @@ class GA:
             broodsize=genetic_params.Brood_size)
         if genetic_params.Use_BucketMutator:
             self._mutator = BucketMutator(
-                genetic_params.Gene_pool, genetic_params.Mutable_fraction)
+                genetic_params.Gene_pool, genetic_params.Mutation_size)
         else:
             self._mutator = Mutator(
-                genetic_params.Gene_pool, genetic_params.Mutable_fraction,
+                genetic_params.Gene_pool, genetic_params.Mutation_size,
                 genetic_params.Deletion_size, genetic_params.Acquisition_size,
                 ps=genetic_params.Probabilities)
         self._policy = ops.GenericPolicy(selector=self.policy_fn)

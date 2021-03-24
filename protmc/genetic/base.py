@@ -44,10 +44,11 @@ class GeneticParams:
     Individual_base_size: int = 50
     Brood_size: int = 1
     Number_of_mates: int = 2
-    Mutable_fraction: float = 0.1
     Use_BucketMutator: bool = False
+    Crossover_mode: str = 'recombine_genes_uniformly'
     Deletion_size: int = 1
     Acquisition_size: int = 1
+    Mutation_size: int = 1
     Probabilities: t.Tuple[float, float, float] = (0.0, 0.5, 0.5)
     Tournaments_selection: int = 20
     Tournaments_policy: int = 20

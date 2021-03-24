@@ -11,10 +11,10 @@ from .individual import GenericIndividual
 
 
 class Mutator:
-    def __init__(self, pool: t.Sequence[Gene], mutable_fraction: float, deletion_size: int, acquisition_size: int,
+    def __init__(self, pool: t.Sequence[Gene], mutation_size: int, deletion_size: int, acquisition_size: int,
                  ps: t.Tuple[float, float, float], copy_individuals: bool = False):
         self.pool = pool
-        self.mutable_fraction = mutable_fraction
+        self.mutation_size = mutation_size
         self.deletion_size = deletion_size
         self.acquisition_size = acquisition_size
         self.ps = ps
@@ -23,11 +23,8 @@ class Mutator:
     def mutation(self, individual: GenericIndividual) -> GenericIndividual:
         if self.copy:
             individual = individual.copy()
-        num_mut = floor(len(individual) * self.mutable_fraction)
-        if not num_mut:
-            return individual
-        del_genes = sample(individual.genes(), num_mut)
-        new_genes = sample(self.pool, num_mut)
+        del_genes = sample(individual.genes(), self.mutation_size)
+        new_genes = sample(self.pool, self.mutation_size)
         return individual.remove_genes(del_genes).add_genes(new_genes)
 
     def deletion(self, individual: GenericIndividual) -> GenericIndividual:
@@ -54,8 +51,8 @@ class Mutator:
 
 
 class BucketMutator:
-    def __init__(self, pool: t.Sequence[Gene], mutable_fraction: float, copy_individuals: bool = False):
-        self.mutable_fraction = mutable_fraction
+    def __init__(self, pool: t.Sequence[Gene], mutation_size: int, copy_individuals: bool = False):
+        self.mutation_size = mutation_size
         self.pool = pool
         self.copy = copy_individuals
         self.buckets: t.Dict[t.Tuple[int, int], t.Set[Gene]] = dict(self.bucket_genes(pool))
@@ -67,10 +64,7 @@ class BucketMutator:
     def mutation(self, individual: GenericIndividual) -> GenericIndividual:
         if self.copy:
             individual = individual.copy()
-        num_mut = floor(len(individual) * self.mutable_fraction)
-        if not num_mut:
-            return individual
-        del_genes = sample(individual.genes(), num_mut)
+        del_genes = sample(individual.genes(), self.mutation_size)
         new_genes = chain.from_iterable(
             (sample(genes_to_sample, min([len(genes_to_del), len(genes_to_sample)]))
              for genes_to_del, genes_to_sample in (

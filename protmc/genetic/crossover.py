@@ -85,10 +85,10 @@ def take_unchanged(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
     Randomly takes `brood_size` number of individuals from the mating groups.
     :param mating_group: A group of individuals selected to give progeny.
     :param brood_size: A number of offsprings.
-    :return: List of offsprings.
+    :return: List of offsprings -- copies of the parents.
     """
     individuals, _ = unzip(mating_group)
-    return list(take(brood_size, random_permutation(individuals)))
+    return list(take(brood_size, (ind.copy() for ind in random_permutation(individuals))))
 
 
 if __name__ == '__main__':
