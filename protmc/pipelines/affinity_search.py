@@ -1,4 +1,3 @@
-import logging
 import typing as t
 from dataclasses import dataclass
 from itertools import chain, groupby, combinations, product, starmap
@@ -33,6 +32,8 @@ class AffinitySetup:
     adapt_base_conf: str
     mc_base_conf: str
     reference_seq: str
+    apo_avg_ref_ener: str
+    holo_avg_ref_ener: str
     bias_singletons: bool = False
     bias_pairs: bool = True
     temperature: float = 0.6
@@ -45,7 +46,7 @@ class AffinitySetup:
     input_bias_name: str = 'ADAPT.inp.dat'
     results_name: str = 'RESULTS.tsv'
 
-    def _setup_conf(self, combination: t.Tuple[int, ...], config: ProtMCconfig) -> ProtMCconfig:
+    def setup_conf(self, combination: t.Tuple[int, ...], config: ProtMCconfig) -> ProtMCconfig:
         conf = config.copy()
         constraints = u.space_constraints(
             reference=self.reference_seq,
@@ -64,15 +65,23 @@ class AffinitySetup:
             conf.set_field('ADAPT_PARAMS', 'Adapt_Space', space)
         return conf
 
-    def _setup_worker(self, combination: t.Tuple[int, ...], system: t.Tuple[str, str],
-                      mode: t.Tuple[str, ProtMCconfig, t.Union[ops.ADAPT, ops.MC]]) \
-            -> t.Union[ops.ADAPT, ops.MC]:
+    def setup_avg_energy(self, worker: t.Union[ops.ADAPT, ops.MC], system_dir: str):
+        avg_ener_path = self.apo_avg_ref_ener if system_dir == self.apo_dir_name else self.holo_avg_ref_ener
+        with open(avg_ener_path) as f:
+            avg_ener = [x.rstrip() for x in f if x != '\n']
+        setter = ('MC_PARAMS', 'Ref_Ener', avg_ener)
+        worker.modify_config(field_setters=[setter])
+
+    def setup_worker(self, combination: t.Tuple[int, ...], system: t.Tuple[str, str],
+                     mode: t.Tuple[str, ProtMCconfig, t.Union[ops.ADAPT, ops.MC]],
+                     combination_base_dir: t.Optional[str] = None) -> t.Union[ops.ADAPT, ops.MC]:
         system_dir, energy_dir = system
         workdir, conf, operator = mode
-        positions = "-".join(map(str, combination))
+        if combination_base_dir is None:
+            combination_base_dir = "-".join(map(str, combination))
         params = ops.WorkerParams(
-            working_dir=f'{self.base_dir}/{positions}/{system_dir}/{workdir}',
-            config=self._setup_conf(combination, conf),
+            working_dir=f'{self.base_dir}/{combination_base_dir}/{system_dir}/{workdir}',
+            config=self.setup_conf(combination, conf),
             protmc_exe_path=self.protmc_exe_path,
             energy_dir_path=energy_dir,
             active_pos=self.active_pos,
@@ -81,12 +90,12 @@ class AffinitySetup:
             input_bias_name=self.input_bias_name,
             results_name=self.results_name
         )
-        worker = operator(params, f'{positions}_{system_dir}_{workdir}')
+        worker = operator(params, f'{combination_base_dir}_{system_dir}_{workdir}')
+        self.setup_avg_energy(worker, system_dir)
         worker.setup_io(dump=True)
         return worker
 
-    def setup_workers(self) -> t.Tuple[t.Tuple[ops.ADAPT, ops.MC]]:
-
+    def prepare_params(self):
         with open(self.adapt_base_conf) as f:
             adapt_conf = parse_config(f.read())
         with open(self.mc_base_conf) as f:
@@ -94,15 +103,20 @@ class AffinitySetup:
 
         combs = self.combinations
         if combs is None:
-            combs = chain(((p, p) for p in self.active_pos), combinations(self.active_pos, 2))
+            combs = chain(
+                ((p, p) for p in self.active_pos),  # singletons
+                combinations(self.active_pos, 2)  # pairs
+            )
 
         params = product(
             combs,
             [(self.apo_dir_name, self.apo_energy_dir), (self.holo_dir_name, self.holo_energy_dir)],
             [(self.adapt_dir_name, adapt_conf, ops.ADAPT), (self.mc_dir_name, mc_conf, ops.MC)])
-        param_pairs = chunked(params, 2)
+        return chunked(params, 2)
 
-        workers = tuple(tuple(starmap(self._setup_worker, pair)) for pair in param_pairs)
+    def setup_workers(self) -> t.Tuple[t.Tuple[ops.ADAPT, ops.MC]]:
+        param_pairs = self.prepare_params()
+        workers = tuple(tuple(starmap(self.setup_worker, pair)) for pair in param_pairs)
 
         if any(not (isinstance(p[0], ops.ADAPT) or isinstance([1], ops.MC)) for p in workers):
             raise ValueError('Each pair must be (ADAPT, MC)')
@@ -112,13 +126,10 @@ class AffinitySetup:
 @ray.remote
 class AffinitySearch:
     def __init__(self, setup: AffinitySetup, log_path: t.Optional[str] = None,
-                 actors_log_path: t.Optional[str] = None, actors_log_level=logging.INFO):
+                 workers: t.Optional[t.Dict[t.Tuple[Id, Id], t.Tuple[ops.ADAPT, ops.MC]]] = None):
         self.setup = setup
         self.log_path = log_path
-        self.actors_log_path = actors_log_path
-        self.actors_log_level = actors_log_level
-        self._workers: t.Dict[t.Tuple[Id, Id], t.Tuple[ops.ADAPT, ops.MC]] = {
-            (adapt.id, mc.id): (adapt, mc) for adapt, mc in setup.setup_workers()}
+        self._workers = workers or {(adapt.id, mc.id): (adapt, mc) for adapt, mc in setup.setup_workers()}
         self._actors = None
         self._done_ids: t.List[t.Tuple[str, str]] = []
 
@@ -155,8 +166,7 @@ class AffinitySearch:
         self._actors = [
             RemoteFlattener.remote(
                 f'FLATTENER-{i}', reference=self.setup.reference_seq,
-                predicate_mc=predicate_mc, predicate_adapt=predicate_adapt,
-                log_path=self.actors_log_path, loglevel=self.actors_log_level)
+                predicate_mc=predicate_mc, predicate_adapt=predicate_adapt)
             for i in range(1, n + 1)]
         return self._actors
 
