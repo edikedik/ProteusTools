@@ -24,6 +24,9 @@ class Worker(AbstractWorker):
         self._mode = self._params.config.mode.field_values[0]
         self._seqs, self._summary = seqs, summary
 
+    def __repr__(self):
+        return f'WorkerID={self._id},Params={self._params}'
+
     @property
     def seqs(self) -> t.Optional[pd.DataFrame]:
         return self._seqs

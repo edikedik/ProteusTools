@@ -1,11 +1,12 @@
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import chain, groupby, tee, starmap
+from itertools import chain, groupby, starmap
 from math import log
 from statistics import mean
 
 import networkx as nx
+import pandas as pd
 from more_itertools import peekable
 
 from .base import Gene, MultiGraphEdge, AbstractIndividual, GenePool
@@ -219,8 +220,29 @@ class AverageIndividual(GenericIndividual):
         return self._score
 
 
-class AverageFlexibleIndividual(AverageIndividual):
-    pass
+Individual = t.TypeVar('Individual', bound=GenericIndividual)
+
+
+def population_to_df(population: t.Iterable[Individual]) -> pd.DataFrame:
+    def agg_ind(i, ind):
+        df = pd.DataFrame(ind.genes())
+        df['Ind'] = i
+        return df
+
+    return pd.concat([agg_ind(i, ind) for i, ind in enumerate(population)])
+
+
+def population_from_df(df: t.Union[pd.DataFrame, str],
+                       individual_type=GenericIndividual,
+                       **kwargs) -> t.List[GenericIndividual]:
+    if isinstance(df, str):
+        df = pd.read_csv(df, sep='\t')
+    for col in ['P1', 'P2', 'A1', 'A2', 'C', 'S']:
+        if col not in df.columns:
+            raise ValueError(f'Expected column {col} in the df')
+
+    gene_groups = df.groupby('Ind').apply(lambda group: [Gene(*g[1:]) for g in group.itertuples()])
+    return [individual_type(genes, **kwargs) for genes in gene_groups]
 
 
 if __name__ == '__main__':

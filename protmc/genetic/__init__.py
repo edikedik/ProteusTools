@@ -3,4 +3,4 @@ from .callback import ProgressSaver, PopulationGeneCounter, UniqueGeneCounter, B
 from .dataprep import prepare_data
 from .ga import GA
 from .individual import GenericIndividual, AverageIndividual, mut_space_size
-from .score import score
+from .score import score, sigma_helper

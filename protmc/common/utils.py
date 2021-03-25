@@ -167,8 +167,7 @@ def union_constraints(constraints: t.List[str]) -> t.List[str]:
     Groups constraints by position and takes a union of constraints per position
     :param constraints: A list of strings "pos AA1 AA2 ..."
     """
-    key = lambda x: int(x.split()[0])
-    groups = groupby(sorted(constraints, key=key), key)
+    groups = groupby(sorted(constraints, key=lambda x: int(x.split()[0])), lambda x: int(x.split()[0]))
     return [f'{g} ' + " ".join(sorted(set(chain.from_iterable(x.split()[1:] for x in gg)))) for g, gg in groups]
 
 
@@ -177,8 +176,7 @@ def intersect_constraints(constraints: t.List[str]) -> t.List[str]:
     Groups constraints by position and intersects all constraints
     :param constraints: A list of strings "pos AA1 AA2 ..."
     """
-    key = lambda x: int(x.split()[0])
-    groups = groupby(sorted(constraints, key=key), key)
+    groups = groupby(sorted(constraints, key=lambda x: int(x.split()[0])), lambda x: int(x.split()[0]))
     merged = ((g, reduce(lambda x, y: set(x) & set(y), (x.split()[1:] for x in gg))) for g, gg in groups)
     return [f'{g} {" ".join(sorted(gg))}' for g, gg in merged]
 

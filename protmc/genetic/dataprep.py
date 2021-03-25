@@ -22,12 +22,12 @@ def _filter_bounds(df: pd.DataFrame, var_name: str, bound: t.Optional[float] = N
     return idx
 
 
-def prepare_df(params: ParsingParams) -> pd.DataFrame:
+def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Parses a DataFrame, typically an output of AffinitySearch, to be used in genetic algorithm.
 
     :param params: `ParsingParams` dataclass instance.
-    :return: Parsed df ready to be sliced into a `GenePool`.
+    :return: Parsed df ready to be sliced into a `GenePool`. The second element is the DataFrame with singletons.
     """
     cols = params.Results_columns
     if isinstance(params.Results, pd.DataFrame):
@@ -171,7 +171,7 @@ def prepare_df(params: ParsingParams) -> pd.DataFrame:
         scores = -scores
     df[cols.affinity] = np.round(scale(scores, params.Scale_range.lower, params.Scale_range.upper), 4)
     logging.info(f'Converted and scaled affinity scores. Final records: {len(df)}')
-    return df
+    return df, singletons
 
 
 def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> GenePool:
@@ -188,8 +188,8 @@ def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> GenePool:
 
 def prepare_data(params: ParsingParams) -> ParsingResult:
     # TODO: docs for the interface function
-    df = prepare_df(params)
-    return ParsingResult(df, prepare_pool(df, params))
+    df, singletons = prepare_df(params)
+    return ParsingResult(df, singletons, prepare_pool(df, params))
 
 
 if __name__ == '__main__':
