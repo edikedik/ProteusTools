@@ -10,12 +10,13 @@ from ray.exceptions import RayTaskError, RayActorError
 import protmc.common.utils as u
 import protmc.operators as ops
 from protmc.basic.config import ProtMCconfig, parse_config
-from protmc.common.base import Id
+from protmc.common.base import Id, NoReferenceError
 
 RemoteFlattener = ray.remote(ops.Flattener)
 _UnorderedQuadruplet = t.Tuple[ops.Worker, ops.Worker, ops.Worker, ops.Worker]
 _OrderedQuadruplet = t.Tuple[ops.ADAPT, ops.MC, ops.ADAPT, ops.MC]
 _WorkerPair = t.NamedTuple('WorkerPair', [('adapt', ops.ADAPT), ('mc', ops.MC)])
+Param_set = t.Tuple[t.Tuple[int, ...], t.Tuple[str, str], t.Tuple[str, ProtMCconfig, t.Union[ops.ADAPT, ops.MC]]]
 RayActor = t.TypeVar('RayActor')
 
 
@@ -95,7 +96,7 @@ class AffinitySetup:
         worker.setup_io(dump=True)
         return worker
 
-    def prepare_params(self):
+    def prepare_params(self) -> t.Iterator[t.Tuple[Param_set, Param_set]]:
         with open(self.adapt_base_conf) as f:
             adapt_conf = parse_config(f.read())
         with open(self.mc_base_conf) as f:
@@ -220,8 +221,12 @@ class AffinitySearch:
                     id_ = q[0].id.split('_')[0]
                     if id_ in quadruplets:
                         continue
-                    quadruplets[id_] = aggregator.aggregate((q[1], q[3]))
-                    self._log_message(f'Aggregated {id_}')
+                    try:
+                        quadruplets[id_] = aggregator.aggregate((q[1], q[3]))
+                        self._log_message(f'Aggregated {id_}')
+                    except NoReferenceError as e:
+                        quadruplets[id_] = None
+                        self._log_message(f'Impossible to aggregate {id_} due to {e}')
         return pairs_flattened, quadruplets
 
 
