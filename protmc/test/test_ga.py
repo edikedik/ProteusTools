@@ -2,14 +2,14 @@ from more_itertools import take
 
 from protmc.genetic.base import GeneticParams
 from protmc.genetic.ga import GA
-from protmc.genetic.individual import GenericIndividual
-from .fixtures import generate_genes
+from protmc.genetic.individual import GraphIndividual
+from .fixtures import generate_graph_genes
 
 
 def test_ga():
     """Use for profiling the code"""
-    pool = generate_genes(1000, 5000)
-    populations = [[GenericIndividual(list(take(50, pool))) for _ in range(20)] for _ in range(20)]
+    pool = generate_graph_genes(1000, 5000)
+    populations = [[GraphIndividual(list(take(50, pool))) for _ in range(20)] for _ in range(20)]
     params = GeneticParams(
         Population_size=100,
         Coupling_threshold=0.3,

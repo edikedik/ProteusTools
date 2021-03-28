@@ -4,16 +4,16 @@ import numpy as np
 import pytest
 from more_itertools import distribute, partition
 
-from protmc.genetic import Gene, GenericIndividual
+from protmc.genetic import EdgeGene, GraphIndividual
 from protmc.genetic.base import Record
 from protmc.genetic.crossover import exchange_fraction, recombine_genes_uniformly, take_unchanged
 from protmc.genetic.mutator import Mutator, BucketMutator
-from .fixtures import random_genes
+from .fixtures import random_graph_genes
 
 
 def test_mutator(random_genes):
-    pool = random_genes
-    ind = GenericIndividual(sample(pool, len(pool) // 2))
+    pool = random_graph_genes
+    ind = GraphIndividual(sample(pool, len(pool) // 2))
     num_del = np.random.randint(1, len(ind))
     num_acq = np.random.randint(1, len(ind))
     mut_size = np.random.randint(1, len(ind))
@@ -35,10 +35,10 @@ def test_mutator(random_genes):
 
 
 def test_bucket_mutator():
-    genes = [Gene(1, 2, 'A', 'B', 0.1, 0.1), Gene(1, 2, 'A', 'C', 1.0, 0.1)]
+    genes = [EdgeGene(1, 2, 'A', 'B', 0.1, 0.1), EdgeGene(1, 2, 'A', 'C', 1.0, 0.1)]
 
     # One-edge individual, one edge in the pool -> replacement
-    ind = GenericIndividual([genes[0]])
+    ind = GraphIndividual([genes[0]])
     assert len(ind.genes()) == 1
     mutator = BucketMutator([genes[1]], 1, True)
     new_ind = mutator([ind])[0]
@@ -48,8 +48,8 @@ def test_bucket_mutator():
     # Test correct bucketing behavior
     chars = ['A', 'B', 'C', 'D', 'E']
     large_pool = [
-        Gene(np.random.randint(3, 10), np.random.randint(3, 10),
-             np.random.choice(chars), np.random.choice(chars), 1.0, 1.0)
+        EdgeGene(np.random.randint(3, 10), np.random.randint(3, 10),
+                 np.random.choice(chars), np.random.choice(chars), 1.0, 1.0)
         for _ in range(10)]
     mutator = BucketMutator(large_pool, 1, True)
     with pytest.raises(KeyError):
@@ -63,10 +63,10 @@ def test_bucket_mutator():
 
 
 def test_recombine_genes_uniformly():
-    genes1 = [Gene(1, 2, 'A', 'B', 0.1, 0.1), Gene(1, 2, 'A', 'C', 1.0, 0.1)]
-    genes2 = [Gene(1, 3, 'A', 'B', 0.1, 0.1), Gene(1, 3, 'A', 'C', 1.0, 0.1)]
-    ind1 = GenericIndividual(genes1)
-    ind2 = GenericIndividual(genes2)
+    genes1 = [EdgeGene(1, 2, 'A', 'B', 0.1, 0.1), EdgeGene(1, 2, 'A', 'C', 1.0, 0.1)]
+    genes2 = [EdgeGene(1, 3, 'A', 'B', 0.1, 0.1), EdgeGene(1, 3, 'A', 'C', 1.0, 0.1)]
+    ind1 = GraphIndividual(genes1)
+    ind2 = GraphIndividual(genes2)
     mated = recombine_genes_uniformly([(ind1, Record(0, 0)), (ind2, Record(0, 0))], 1)
     assert len(mated) == 1
     assert len(mated[0].genes()) == 2
@@ -77,29 +77,29 @@ def test_recombine_genes_uniformly():
 
 def test_exchange_fraction(random_genes):
     g1, g2, g3, g4 = (
-        Gene(1, 2, 'A', 'B', 1, 1), Gene(1, 2, 'A', 'C', 1, 1),
-        Gene(3, 4, 'A', 'B', 1, 1), Gene(3, 4, 'A', 'C', 1, 1))
-    ind1 = GenericIndividual([g1])
+        EdgeGene(1, 2, 'A', 'B', 1, 1), EdgeGene(1, 2, 'A', 'C', 1, 1),
+        EdgeGene(3, 4, 'A', 'B', 1, 1), EdgeGene(3, 4, 'A', 'C', 1, 1))
+    ind1 = GraphIndividual([g1])
     res = exchange_fraction([(ind1, Record(0, 0))], 1, 1.0)
     assert len(res) == 1
     ind1_ = res[0]
     assert set(ind1_.genes()) == {g1}
-    ind2 = GenericIndividual([g1])
+    ind2 = GraphIndividual([g1])
     ind1_, ind2_ = exchange_fraction([(ind1, Record(0, 0)), (ind2, Record(0, 0))], 2, 1.0)
     assert len(ind1_) == len(ind2_) == 1
     assert set(ind1_.genes()) == set(ind2_.genes()) == {g1}
-    ind2 = GenericIndividual([g2])
+    ind2 = GraphIndividual([g2])
     ind1_, ind2_ = exchange_fraction([(ind1, Record(0, 0)), (ind2, Record(0, 0))], 2, 0.9)
     assert set(ind1_.genes()) == {g1} and set(ind2_.genes()) == {g2}
-    ind1 = GenericIndividual([g1, g2])
-    ind2 = GenericIndividual([g3, g4])
+    ind1 = GraphIndividual([g1, g2])
+    ind2 = GraphIndividual([g3, g4])
     res = exchange_fraction([(ind1, Record(0, 0)), (ind2, Record(0, 0))], 2, 0.51)
     assert len(res) == 2
     ind1_, ind2_ = res
     assert len(ind1_) == len(ind2_) == 2
 
-    genes1, genes2 = distribute(2, random_genes)
-    ind1, ind2 = GenericIndividual(genes1), GenericIndividual(genes2)
+    genes1, genes2 = distribute(2, random_graph_genes)
+    ind1, ind2 = GraphIndividual(genes1), GraphIndividual(genes2)
     res = exchange_fraction([(ind1, Record(0, 0)), (ind2, Record(0, 0))], 1, 0.5)
     assert len(res) == 1
     ind = res[0]
@@ -109,9 +109,9 @@ def test_exchange_fraction(random_genes):
 
 
 def test_take_unchanged(random_genes):
-    l = len(random_genes) // 2
-    ind1 = GenericIndividual(random_genes[:l])
-    ind2 = GenericIndividual(random_genes[l:])
+    l = len(random_graph_genes) // 2
+    ind1 = GraphIndividual(random_graph_genes[:l])
+    ind2 = GraphIndividual(random_graph_genes[l:])
     res = take_unchanged([(ind1, Record(0, 0)), (ind2, Record(0, 0))], brood_size=1)
     assert len(res) == 1
     ind = res[0]
