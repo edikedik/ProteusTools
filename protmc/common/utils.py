@@ -258,7 +258,7 @@ def decompose_into_singletons(df: pd.DataFrame):
     def score_singleton(row, pos):
         return singleton_scores[(row.pos.split('-')[pos], row.seq_subset[pos])]
 
-    is_singleton = df.seq_subset.__call__(lambda s: len(s) == 1, )
+    is_singleton = df.seq_subset.apply(lambda s: len(s) == 1)
     singletons = df[is_singleton].copy()
     not_singletons = df[~is_singleton].copy()
     singletons['Sai'], singletons['Saj'] = None, None
@@ -279,8 +279,8 @@ def clean_dir(path: str, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), 
 
 def subset_seq(df: pd.DataFrame, pos: t.Sequence[int], pos_mapping: t.Dict[int, int], subset_col: str = 'seq_subset'):
     df = df.copy()
-    df[subset_col] = df['seq'].__call__(lambda x: "".join(
-        [x[pos_mapping[p]] for p in pos]), )
+    df[subset_col] = df['seq'].apply(lambda x: "".join(
+        [x[pos_mapping[p]] for p in pos]))
     return df
 
 
