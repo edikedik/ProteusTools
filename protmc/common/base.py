@@ -162,7 +162,7 @@ class AbstractPoolExecutor(metaclass=ABCMeta):
     def id(self):
         return self._id
 
-    def apply(self, executor: t.Type[AbstractExecutor], pool: t.Collection[t.Type[AbstractWorker]]) \
+    def __call__(self, pool: t.Collection[t.Type[AbstractWorker]]) \
             -> t.Collection[AbstractWorker]:
         raise NotImplementedError
 

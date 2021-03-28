@@ -1,23 +1,33 @@
+import logging
 import typing as t
 from dataclasses import dataclass
 from itertools import chain, groupby, combinations, product, starmap
 
-import pandas as pd
 import ray
 from more_itertools import chunked
-from ray.exceptions import RayTaskError, RayActorError
 
 import protmc.common.utils as u
 import protmc.operators as ops
 from protmc.basic.config import ProtMCconfig, parse_config
-from protmc.common.base import Id, NoReferenceError
+from protmc.common.base import Id
+from protmc.operators import ADAPT, MC, AffinityAggregator, GenericExecutor
+from protmc.operators.flattener import Flattener, flatten_pair
 
-RemoteFlattener = ray.remote(ops.Flattener)
 _UnorderedQuadruplet = t.Tuple[ops.Worker, ops.Worker, ops.Worker, ops.Worker]
 _OrderedQuadruplet = t.Tuple[ops.ADAPT, ops.MC, ops.ADAPT, ops.MC]
 _WorkerPair = t.NamedTuple('WorkerPair', [('adapt', ops.ADAPT), ('mc', ops.MC)])
 Param_set = t.Tuple[t.Tuple[int, ...], t.Tuple[str, str], t.Tuple[str, ProtMCconfig, t.Union[ops.ADAPT, ops.MC]]]
 RayActor = t.TypeVar('RayActor')
+
+
+@dataclass
+class FlattenerSetup:
+    executor_adapt: t.Optional[GenericExecutor] = None
+    executor_mc: t.Optional[GenericExecutor] = None
+    predicate_adapt: t.Callable[[ADAPT], bool] = None
+    predicate_mc: t.Callable[[MC], bool] = None
+    reference: t.Optional[str] = None
+    count_threshold: int = 1
 
 
 @dataclass
@@ -124,14 +134,11 @@ class AffinitySetup:
         return workers
 
 
-@ray.remote
 class AffinitySearch:
-    def __init__(self, setup: AffinitySetup, log_path: t.Optional[str] = None,
-                 workers: t.Optional[t.Dict[t.Tuple[Id, Id], t.Tuple[ops.ADAPT, ops.MC]]] = None):
+    def __init__(self, setup: AffinitySetup, workers: t.Optional[t.List[t.Tuple[ops.ADAPT, ops.MC]]] = None):
         self.setup = setup
-        self.log_path = log_path
-        self._workers = workers or {(adapt.id, mc.id): (adapt, mc) for adapt, mc in setup.setup_workers()}
-        self._actors = None
+        workers = workers or setup.setup_workers()
+        self._workers = {(adapt.id, mc.id): (adapt, mc) for adapt, mc in workers}
         self._done_ids: t.List[t.Tuple[str, str]] = []
 
     def get_done_ids(self):
@@ -139,9 +146,6 @@ class AffinitySearch:
 
     def get_workers(self) -> t.Dict[t.Tuple[Id, Id], t.Tuple[ops.ADAPT, ops.MC]]:
         return self._workers
-
-    def get_actors(self):
-        return self._actors
 
     @property
     def categories(self) -> t.Dict[str, t.Tuple[str, int]]:
@@ -163,71 +167,43 @@ class AffinitySearch:
         groups = (tuple(gg) for g, gg in groupby(workers, lambda x: x.id.split('_')[0]))
         return map(order, filter(lambda gg: len(gg) == 4, groups))
 
-    def _spawn_actors(self, n: int, predicate_mc, predicate_adapt) -> t.List[RayActor]:
-        self._actors = [
-            RemoteFlattener.remote(
-                f'FLATTENER-{i}', reference=self.setup.reference_seq,
-                predicate_mc=predicate_mc, predicate_adapt=predicate_adapt)
-            for i in range(1, n + 1)]
-        return self._actors
+    def flatten(self, setup: t.Union[FlattenerSetup, t.List[FlattenerSetup]], stop_on_fail: bool = False,
+                ids: t.Optional[t.Sequence[t.Tuple[Id, Id]]] = None, update: bool = True) \
+            -> t.List[t.Tuple[ADAPT, MC]]:
+        workers = self._workers
+        if ids:
+            workers = {key: v for key, v in workers.items() if key in ids}
+        logging.info(f'Will flatten {len(workers)} workers')
 
-    def _log_message(self, msg) -> None:
-        if self.log_path:
-            with open(self.log_path, 'a+') as f:
-                print(msg, file=f)
+        if isinstance(setup, FlattenerSetup):
+            fs = [Flattener(id_=i, **setup.__dict__) for i in range(len(workers))]
+        else:
+            assert len(setup) == len(workers)
+            fs = [Flattener(id_=i, **setup.__dict__) for i, s in enumerate(setup)]
 
-    def run(self, aggregator: ops.AffinityAggregator,
-            adapt_executor: t.Optional[ops.GenericExecutor],
-            mc_executor: t.Optional[ops.GenericExecutor] = None,
-            predicate_adapt: t.Callable[[ops.ADAPT], bool] = None,
-            predicate_mc: t.Callable[[ops.MC], bool] = None,
-            num_cpus: t.Optional[int] = None,
-            stop_run_on_actors_fail: bool = True) \
-            -> t.Tuple[t.List[t.Tuple[ops.ADAPT, ops.MC]], t.Dict[str, pd.DataFrame]]:
-        # TODO: is it hard to allow non-blocking behavior?
-        # This would allow combining execution of different AffinitySearch instances in a
-        # single run time.
+        handles = [flatten_pair.remote(p, f) for p, f in zip(workers.values(), fs)]
+        all_ids = set(workers)
+        done_ids = set()
+        while handles:
+            remain = all_ids - done_ids
+            logging.info(f'Remaining {len(remain)} our of {len(all_ids)}: {remain}')
 
-        def flatten_safely(actor, pair):
-            try:
-                result = actor.apply.remote(adapt_executor, pair, mc_executor)
-                return result
-            except (RayTaskError, RayActorError, ValueError) as e:
-                actor_id = ray.get(actor.get_id.remote())
-                msg = f'Actor {actor_id} failed on {pair[0].id} and {pair[1].id} with an error {e}'
-                self._log_message(msg)
-                if stop_run_on_actors_fail:
-                    raise RuntimeError(msg)
-            return None, None
+            pair_done, handles = ray.wait(handles)
+            adapt, mc, step = ray.get(pair_done[0])
+            if not step:
+                logging.warning(f'Failed on {adapt.id} and {mc.id}')
+                if stop_on_fail:
+                    return [(adapt, mc) for adapt, mc in workers.values() if (adapt.id, mc.id) in done_ids]
+            else:
+                if update:
+                    self._workers[(adapt.id, mc.id)] = adapt, mc
+                logging.info(f'Flattened {adapt.id} and {mc.id} in {step} steps')
+            done_ids |= {(adapt.id, mc.id)}
 
-        if num_cpus is None:
-            num_cpus = int(ray.available_resources()['CPU'])
+        return [(adapt, mc) for adapt, mc in workers.values() if (adapt.id, mc.id) in done_ids]
 
-        # Spawn actors
-        actors = self._spawn_actors(num_cpus - 1, predicate_mc, predicate_adapt)
-        self._log_message(f'Set up {len(actors)} actors')
-
-        pool = ray.util.ActorPool(actors)
-        pairs_flattened, quadruplets = [], {}
-        iter_results = pool.map_unordered(flatten_safely, list(self._workers.values()))
-        for i, (adapt, mc) in enumerate(iter_results, start=1):
-            if adapt is not None and mc is not None:
-                pairs_flattened.append((adapt, mc))
-                self._done_ids.append((adapt.id, mc.id))
-                self._workers[(adapt.id, mc.id)] = (adapt, mc)
-                self._log_message(f'Flattened {adapt.id} and {mc.id}. '
-                                  f'Remaining: {len(self._workers) - i} pairs')
-                for q in self._get_quadruplets(pairs_flattened):
-                    id_ = q[0].id.split('_')[0]
-                    if id_ in quadruplets:
-                        continue
-                    try:
-                        quadruplets[id_] = aggregator.aggregate((q[1], q[3]))
-                        self._log_message(f'Aggregated {id_}')
-                    except NoReferenceError as e:
-                        quadruplets[id_] = None
-                        self._log_message(f'Impossible to aggregate {id_} due to {e}')
-        return pairs_flattened, quadruplets
+    def aggregate(self, aggregator: AffinityAggregator, ids: t.Collection[Id]):
+        raise NotImplementedError
 
 
 if __name__ == '__main__':

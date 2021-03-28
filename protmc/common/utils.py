@@ -162,7 +162,7 @@ def space_constraints(
     return constraints
 
 
-def union_constraints(constraints: t.List[str]) -> t.List[str]:
+def union_constraints(constraints: t.Iterable[str]) -> t.List[str]:
     """
     Groups constraints by position and takes a union of constraints per position
     :param constraints: A list of strings "pos AA1 AA2 ..."
@@ -171,7 +171,7 @@ def union_constraints(constraints: t.List[str]) -> t.List[str]:
     return [f'{g} ' + " ".join(sorted(set(chain.from_iterable(x.split()[1:] for x in gg)))) for g, gg in groups]
 
 
-def intersect_constraints(constraints: t.List[str]) -> t.List[str]:
+def intersect_constraints(constraints: t.Iterable[str]) -> t.List[str]:
     """
     Groups constraints by position and intersects all constraints
     :param constraints: A list of strings "pos AA1 AA2 ..."
@@ -179,6 +179,15 @@ def intersect_constraints(constraints: t.List[str]) -> t.List[str]:
     groups = groupby(sorted(constraints, key=lambda x: int(x.split()[0])), lambda x: int(x.split()[0]))
     merged = ((g, reduce(lambda x, y: set(x) & set(y), (x.split()[1:] for x in gg))) for g, gg in groups)
     return [f'{g} {" ".join(sorted(gg))}' for g, gg in merged]
+
+
+def replace_constraints(constraints, replacement):
+    """
+    For each overlapping positions, replace constraints in `constraints` by those in `replacement.
+    """
+    ps = [c.split()[0] for c in replacement]
+    base_clean = list(filterfalse(lambda c: c.split()[0] in ps, constraints))
+    return sorted(chain(base_clean, replacement))
 
 
 def extract_constraints(configs: t.Iterable) -> t.Optional[t.List[str]]:
@@ -249,7 +258,7 @@ def decompose_into_singletons(df: pd.DataFrame):
     def score_singleton(row, pos):
         return singleton_scores[(row.pos.split('-')[pos], row.seq_subset[pos])]
 
-    is_singleton = df.seq_subset.apply(lambda s: len(s) == 1)
+    is_singleton = df.seq_subset.__call__(lambda s: len(s) == 1, )
     singletons = df[is_singleton].copy()
     not_singletons = df[~is_singleton].copy()
     singletons['Sai'], singletons['Saj'] = None, None
@@ -270,8 +279,8 @@ def clean_dir(path: str, leave_ext: t.Tuple[str, ...] = ('dat', 'conf', 'tsv'), 
 
 def subset_seq(df: pd.DataFrame, pos: t.Sequence[int], pos_mapping: t.Dict[int, int], subset_col: str = 'seq_subset'):
     df = df.copy()
-    df[subset_col] = df['seq'].apply(lambda x: "".join(
-        [x[pos_mapping[p]] for p in pos]))
+    df[subset_col] = df['seq'].__call__(lambda x: "".join(
+        [x[pos_mapping[p]] for p in pos]), )
     return df
 
 
