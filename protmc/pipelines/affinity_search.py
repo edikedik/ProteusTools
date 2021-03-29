@@ -139,12 +139,21 @@ class AffinitySearch:
         self.setup = setup
         workers = workers or setup.setup_workers()
         self._workers = {(adapt.id, mc.id): (adapt, mc) for adapt, mc in workers}
-        self._done_ids: t.List[t.Tuple[str, str]] = []
+        self._done_ids: t.Set[t.Tuple[str, str]] = set()
 
-    def get_done_ids(self):
+    @property
+    def done_ids(self) -> t.Set[t.Tuple[str, str]]:
         return self._done_ids
 
-    def get_workers(self) -> t.Dict[t.Tuple[Id, Id], t.Tuple[ops.ADAPT, ops.MC]]:
+    def flush_done(self):
+        self._done_ids = set()
+
+    @property
+    def not_done_ids(self) -> t.Set[t.Tuple[str, str]]:
+        return set(self._workers) - self._done_ids
+
+    @property
+    def workers(self) -> t.Dict[t.Tuple[Id, Id], t.Tuple[ops.ADAPT, ops.MC]]:
         return self._workers
 
     @property
@@ -183,9 +192,8 @@ class AffinitySearch:
 
         handles = [flatten_pair.remote(p, f) for p, f in zip(workers.values(), fs)]
         all_ids = set(workers)
-        done_ids = set()
         while handles:
-            remain = all_ids - done_ids
+            remain = all_ids - self._done_ids
             logging.info(f'Remaining {len(remain)} our of {len(all_ids)}: {remain}')
 
             pair_done, handles = ray.wait(handles)
@@ -193,14 +201,14 @@ class AffinitySearch:
             if not step:
                 logging.warning(f'Failed on {adapt.id} and {mc.id}')
                 if stop_on_fail:
-                    return [(adapt, mc) for adapt, mc in workers.values() if (adapt.id, mc.id) in done_ids]
+                    return [(adapt, mc) for adapt, mc in workers.values() if (adapt.id, mc.id) in self._done_ids]
             else:
                 if update:
                     self._workers[(adapt.id, mc.id)] = adapt, mc
                 logging.info(f'Flattened {adapt.id} and {mc.id} in {step} steps')
-            done_ids |= {(adapt.id, mc.id)}
+            self._done_ids |= {(adapt.id, mc.id)}
 
-        return [(adapt, mc) for adapt, mc in workers.values() if (adapt.id, mc.id) in done_ids]
+        return [(adapt, mc) for adapt, mc in workers.values() if (adapt.id, mc.id) in self._done_ids]
 
     def aggregate(self, aggregator: AffinityAggregator, ids: t.Collection[Id]):
         raise NotImplementedError
