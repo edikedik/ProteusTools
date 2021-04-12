@@ -10,6 +10,12 @@ class Bias:
     def __init__(self, bias: t.Optional[pd.DataFrame] = None):
         self.bias: t.Optional[pd.DataFrame] = bias
 
+    def __len__(self):
+        return 0 if self.bias is None else len(self.bias)
+
+    def copy(self):
+        return Bias(self.bias.copy() if self.bias is not None else None)
+
     def read_adapt_output(self, path: str, overwrite: bool = True) -> 'Bias':
         def wrap_chunk(chunk: t.List[str]):
             step = int(chunk[0].split()[-1])
@@ -85,15 +91,21 @@ class Bias:
         """
 
         """
+        if other.bias is None:
+            return self
+
         bias_upd = other.bias.copy()
         first_step_in_upd = min(bias_upd['step'])
         last_step_in_bias = max(self.bias['step'])
 
-        # Here we assume that the update id a consequence of restarting ADAPT
+        # Here we assume that the update is a consequence of restarting ADAPT
         # and thereby resetting step counter. Hence, we add last written step
         # of the current bias to the first step of the update
         if first_step_in_upd <= last_step_in_bias:
             bias_upd['step'] += last_step_in_bias
+        # Otherwise -- no update; we simply concatenate two biases
+        else:
+            return self.concat(other, overwrite)
 
         last_bias_idx = self.bias['step'] == last_step_in_bias
         bias_upd = pd.merge(bias_upd, self.bias[last_bias_idx], on='var', how='inner',
@@ -105,8 +117,9 @@ class Bias:
             columns={'step_upd': 'step'})
         bias_upd['step'] = bias_upd['step'].astype(int)
         if bias_upd.isna().any().any():
-            raise ValueError('Problem with updating the bias. Inspect both `self` and `other`')
-        df = pd.concat([self.bias, bias_upd])
+            raise ValueError('Problem with updating the bias -- some values are empty. '
+                             'Inspect both `self` and `other`')
+        df = pd.concat([self.bias, bias_upd]).reset_index(drop=True).sort_values(['step', 'var'])
         if overwrite:
             self.bias = df
         return Bias(df)

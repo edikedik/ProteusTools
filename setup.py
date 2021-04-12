@@ -20,7 +20,7 @@ setup(
         'pytest',
         'ray',
         'genetic',
-        'numba',
+        'networkx',
         'click>=7.1.2',
         'pandas>=1.1.3',
         'tqdm>=4.50.2',

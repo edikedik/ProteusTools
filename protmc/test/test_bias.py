@@ -52,6 +52,15 @@ def bias_tsv(random_bias):
         return f.read()
 
 
+@pytest.fixture()
+def df_ini():
+    return pd.DataFrame(
+        {'step': [1, 1, 2, 2],
+         'var': ['X', 'Y', 'X', 'Y'],
+         'bias': [0, 0, 1, -1]}
+    )
+
+
 def test_bias_init(bias_dat, bias_tsv):
     # Empty init
     assert Bias().bias is None
@@ -74,7 +83,7 @@ def test_bias_init(bias_dat, bias_tsv):
     assert bias.bias is not None
 
 
-def test_bias_update(random_bias):
+def test_random_bias_update(random_bias):
     b = random_bias.bias
     first = min(b['step'])
     last = max(b['step'])
@@ -99,3 +108,99 @@ def test_bias_update(random_bias):
     with pytest.raises(ValueError):
         b_ = Bias(b.iloc[:len(b) // 2])
         Bias(b).update(b_)
+
+
+def test_manual_bias_update(df_ini):
+    b_ini = Bias(df_ini)
+
+    def test_upd_empty():
+        upd = b_ini.update(Bias())
+        assert upd is b_ini
+
+    def test_common_case():
+        df_upd = pd.DataFrame(
+            {'step': [1, 1, 2, 2],
+             'var': ['X', 'Y', 'X', 'Y'],
+             'bias': [1, -1, 2, -2]}
+        )
+        upd = b_ini.update(Bias(df_upd), overwrite=False)
+
+        assert len(upd) == 8
+        assert (b_ini.bias == upd.bias[:4]).all().all()
+        assert list(upd.bias['step']) == [1, 1, 2, 2, 3, 3, 4, 4]
+        assert list(upd.bias['var']) == ['X', 'Y'] * 4
+        assert list(upd.bias['bias']) == [0, 0, 1, -1, 2, -2, 3, -3]
+
+    def test_less_upd_vars():
+        df_upd = pd.DataFrame(
+            {'step': [1, 2],
+             'var': ['X', 'X'],
+             'bias': [1, -1]}
+        )
+        upd = b_ini.update(Bias(df_upd), overwrite=False)
+
+        assert len(upd) == 6
+        assert list(upd.bias['step']) == [1, 1, 2, 2, 3, 4]
+        assert list(upd.bias['var']) == ['X', 'Y', 'X', 'Y', 'X', 'X']
+        assert list(upd.bias['bias']) == [0, 0, 1, -1, 2, 0]
+
+    def test_more_upd_vars():
+        # variable is ignored
+        df_upd = pd.DataFrame(
+            {'step': [1, 1, 1, 2, 2, 2],
+             'var': ['X', 'Y', 'Z', 'X', 'Y', 'Z'],
+             'bias': [1, -1, -2, 2, -2, 3]}
+        )
+        upd = b_ini.update(Bias(df_upd), overwrite=False)
+
+        assert len(upd) == 8
+        assert list(upd.bias['step']) == [1, 1, 2, 2, 3, 3, 4, 4]
+        assert list(upd.bias['var']) == ['X', 'Y', 'X', 'Y', 'X', 'Y', 'X', 'Y']
+        assert list(upd.bias['bias']) == [0, 0, 1, -1, 2, -2, 3, -3]
+
+    def test_min_step_larger():
+        df_upd = pd.DataFrame(
+            {'step': [3, 3, 4, 4],
+             'var': ['X', 'Y', 'X', 'Y'],
+             'bias': [1, -1, 2, -2]}
+        )
+        upd = b_ini.update(Bias(df_upd), overwrite=False)
+
+        assert len(upd) == 8
+        assert list(upd.bias['step']) == [1, 1, 2, 2, 3, 3, 4, 4]
+        assert list(upd.bias['bias']) == [0, 0, 1, -1, 1, -1, 2, -2]
+
+    test_upd_empty()
+    test_common_case()
+    test_less_upd_vars()
+    test_more_upd_vars()
+    test_min_step_larger()
+
+
+def test_centering():
+    def test_one_pos():
+        df_ini = pd.DataFrame(
+            {'step': [1, 1, 2, 2],
+             'var': ['1-X-1-X', '1-X-1-Y'] * 2,
+             'bias': [1, 1, 2, 2]}
+        )
+        b_ini = Bias(df_ini)
+        with pytest.raises(KeyError):
+            b_ini.center_at_ref({'2': 'X'}, overwrite=False)
+        upd = b_ini.center_at_ref({'1': 'X'}, overwrite=False)
+        assert len(upd) == len(b_ini)
+        assert list(upd.bias['step']) == [1, 1, 2, 2]
+        assert list(upd.bias['bias']) == [0, 0, 0, 0]
+
+    def test_two_pos():
+        df_ini = pd.DataFrame(
+            {'step': [1] * 3 + [2] * 3,
+             'var': ['1-X-1-X', '1-X-2-Y', '1-X-2-Z'] * 2,
+             'bias': [10, 2, 3, 20, 4, 6]}
+        )
+        b_ini = Bias(df_ini)
+        upd = b_ini.center_at_ref({'1': 'X', '2': 'Y'}, overwrite=False)
+        assert list(upd.bias['bias']) == [0, 0, 1, 0, 0, 2]
+
+    test_one_pos()
+    test_two_pos()
