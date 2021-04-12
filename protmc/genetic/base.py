@@ -11,7 +11,8 @@ Bounds = t.NamedTuple('Bounds', [('lower', t.Optional[float]), ('upper', t.Optio
 Columns = t.NamedTuple(
     'Columns', [('pos', str), ('seq_subset', str), ('affinity', str),
                 ('stability_apo', str), ('stability_holo', str)])
-ParsingResult = t.NamedTuple('ParsingResult', [('df', pd.DataFrame), ('singletons', pd.DataFrame), ('pool', GenePool)])
+ParsingResult = t.NamedTuple(
+    'ParsingResult', [('df', pd.DataFrame), ('singletons', pd.DataFrame), ('pool', t.Collection[EdgeGene])])
 Record = t.NamedTuple('Record', [('age', int), ('score', float)])
 MultiGraphEdge = t.Tuple[int, int, str]
 
