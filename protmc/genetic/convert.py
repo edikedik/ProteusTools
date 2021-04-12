@@ -9,15 +9,15 @@ import networkx as nx
 from more_itertools import chunked
 
 from protmc.operators import ADAPT, MC
-from .base import Gene
-from .individual import GenericIndividual
+from .base import EdgeGene
+from .individual import GraphIndividual
 from ..common import AminoAcidDict
 from ..common.utils import replace_constraints
 from ..pipelines.affinity_search import AffinitySetup, Param_set
 
-CC = t.NamedTuple('CCSetup', [('Positions', t.Tuple[int, ...]), ('Genes', t.Tuple[Gene, ...]),
+CC = t.NamedTuple('CCSetup', [('Positions', t.Tuple[int, ...]), ('Genes', t.Tuple[EdgeGene, ...]),
                               ('MutSpace', t.Tuple[str, ...]), ('MutSpaceSize', int)])
-Ind = t.NamedTuple('IndSetup', [('CCs', t.List[CC]), ('WeakLinks', t.List[Gene])])
+Ind = t.NamedTuple('IndSetup', [('CCs', t.List[CC]), ('WeakLinks', t.List[EdgeGene])])
 Worker = t.Union[ADAPT, MC]
 
 
@@ -32,7 +32,7 @@ def prepare_cc(cc: nx.MultiGraph) -> CC:
     return CC(positions, genes, mut_space, mut_space_size)
 
 
-def prepare_individual(ind: GenericIndividual) -> Ind:
+def prepare_individual(ind: GraphIndividual) -> Ind:
     ccs = list(map(prepare_cc, ind.ccs))
     weak_links = [ind.graph.edges[e]['gene'] for e in ind.weak_links()]
     return Ind(ccs, weak_links)
@@ -54,7 +54,7 @@ def cc_to_worker_pair(cc: CC, setup: AffinitySetup, param_pair: t.Tuple[Param_se
     return setup_worker(param_pair[0]), setup_worker(param_pair[1])
 
 
-def setup_population(population: t.Iterable[GenericIndividual], setup: AffinitySetup, min_mut_space_size: int = 3):
+def setup_population(population: t.Iterable[GraphIndividual], setup: AffinitySetup, min_mut_space_size: int = 3):
     if setup.combinations is not None:
         warn('Existing `combinations` attribute will be overwritten')
 

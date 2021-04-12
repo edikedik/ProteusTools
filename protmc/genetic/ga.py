@@ -14,14 +14,14 @@ from tqdm import tqdm
 
 from .base import GeneticParams, Record
 from .crossover import recombine_genes_uniformly, take_unchanged
-from .individual import GenericIndividual
+from .individual import GraphIndividual
 from .mutator import Mutator, BucketMutator
 from .score import score
 
 
 class GA:
     def __init__(self, genetic_params: GeneticParams,
-                 populations: t.Optional[t.List[t.List[GenericIndividual]]] = None,
+                 populations: t.Optional[t.List[t.List[GraphIndividual]]] = None,
                  records: t.Optional[t.List[t.List[Record]]] = None):
         crossovers = {'recombine_genes_uniformly': recombine_genes_uniformly, 'take_unchanged': take_unchanged}
         self.genetic_params = genetic_params
@@ -39,8 +39,8 @@ class GA:
         # Setup operators
         self._estimator = ops.GenericEstimator(func=self.score_func)
         self._recorder = ops.GenericRecorder(
-            start=lambda indiv, score_: Record(0, score_),
-            update=lambda indiv, rec: Record(rec.age + 1, rec.score))
+            start=lambda ind, score_: Record(0, score_),
+            update=lambda ind, rec: Record(rec.age + 1, rec.score))
         self._selector = ops.GenericSelector(
             selector=self.selector_fn,
             nmates=genetic_params.Number_of_mates)
@@ -65,8 +65,8 @@ class GA:
         self.populations = populations
         self.records = records
 
-    def spawn_populations(self, n: int, overwrite: bool = True, individual_type=GenericIndividual,
-                          from_strong_edges: bool = True) -> t.List[t.List[GenericIndividual]]:
+    def spawn_populations(self, n: int, overwrite: bool = True, individual_type=GraphIndividual,
+                          from_strong_edges: bool = True) -> t.List[t.List[GraphIndividual]]:
         pool = ([g for g in self.genetic_params.Gene_pool if g.C >= self.genetic_params.Coupling_threshold]
                 if from_strong_edges else None)
         populations = ray.get([_spawn_remote.remote(self.genetic_params, individual_type, pool) for _ in range(n)])
@@ -173,10 +173,10 @@ def _spawn_remote(genetic_params: GeneticParams, individual_type, pool=None):
 
 @ray.remote
 def _evolve_remote(
-        num_gen: int, evolver: GenericEvolver, individuals: t.List[GenericIndividual],
+        num_gen: int, evolver: GenericEvolver, individuals: t.List[GraphIndividual],
         records: t.List[t.Optional[Record]], operators: Operators, genetic_params: GeneticParams,
         callbacks: t.Optional[t.List[Callback]]) \
-        -> t.Tuple[t.List[GenericIndividual], t.List[Record], t.Optional[t.List[Callback]], int]:
+        -> t.Tuple[t.List[GraphIndividual], t.List[Record], t.Optional[t.List[Callback]], int]:
     gen = 0
     counter = 0
     previous = 0

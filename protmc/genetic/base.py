@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 import networkx as nx
 import pandas as pd
 
-Gene = t.NamedTuple('Gene', [('P1', int), ('P2', int), ('A1', str), ('A2', str), ('S', float), ('C', float)])
-GenePool = t.Collection[Gene]
+EdgeGene = t.NamedTuple('EdgeGene', [('P1', int), ('P2', int), ('A1', str), ('A2', str), ('S', float), ('C', float)])
 EarlyStopping = t.NamedTuple('EarlyStopping', [('Rounds', int), ('ScoreImprovement', float), ('Selector', str)])
 Bounds = t.NamedTuple('Bounds', [('lower', t.Optional[float]), ('upper', t.Optional[float])])
 Columns = t.NamedTuple(
@@ -40,7 +39,7 @@ class GeneticParams:
     Population_size: int
     Coupling_threshold: float
     Score_kwargs: t.Dict[str, t.Any] = field(default_factory=dict)
-    Gene_pool: t.List[Gene] = field(default_factory=list)
+    Gene_pool: t.List[EdgeGene] = field(default_factory=list)
     Individual_base_size: int = 50
     Brood_size: int = 1
     Number_of_mates: int = 2
@@ -90,7 +89,7 @@ class ParsingParams:
     Exclude_pairs: t.List[t.Tuple[int, int]] = field(default_factory=list)
 
 
-class AbstractIndividual(metaclass=ABCMeta):
+class AbstractGraphIndividual(metaclass=ABCMeta):
 
     @property
     @abstractmethod
@@ -113,11 +112,11 @@ class AbstractIndividual(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def add_genes(self, genes: GenePool) -> 'AbstractIndividual':
+    def add_genes(self, genes: t.Collection[EdgeGene]) -> 'AbstractGraphIndividual':
         pass
 
     @abstractmethod
-    def remove_genes(self, genes: GenePool) -> 'AbstractIndividual':
+    def remove_genes(self, genes: t.Collection[EdgeGene]) -> 'AbstractGraphIndividual':
         pass
 
 

@@ -10,7 +10,7 @@ import pandas as pd
 
 from protmc.common.base import AminoAcidDict
 from protmc.common.utils import scale
-from .base import Gene, GenePool, ParsingParams, ParsingResult
+from .base import EdgeGene, ParsingParams, ParsingResult
 
 
 def _filter_bounds(df: pd.DataFrame, var_name: str, bound: t.Optional[float] = None, lower: bool = True):
@@ -174,13 +174,13 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     return df, singletons
 
 
-def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> GenePool:
+def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> t.Tuple[EdgeGene, ...]:
     """
     Prepare the gene pool
     """
     cols = params.Results_columns
     return tuple(
-        Gene(int(pos.split('-')[0]), int(pos.split('-')[1]), seq[0], seq[1], score, coupling)
+        EdgeGene(int(pos.split('-')[0]), int(pos.split('-')[1]), seq[0], seq[1], score, coupling)
         for _, pos, seq, score, coupling in df[
             [cols.pos, cols.seq_subset, cols.affinity, 'coupling']].itertuples()
     )

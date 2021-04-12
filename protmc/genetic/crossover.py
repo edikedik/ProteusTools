@@ -5,10 +5,10 @@ from math import floor
 from more_itertools import random_permutation, take, distribute, unzip
 
 from .base import Record
-from .individual import GenericIndividual
+from .individual import GraphIndividual
 
 
-def _check_mating_group(mating_group: t.List[t.Tuple[GenericIndividual, Record]]):
+def _check_mating_group(mating_group: t.List[t.Tuple[GraphIndividual, Record]]):
     # Validate the operation
     if len(mating_group) < 2:
         raise RuntimeError(f'Mating group must contain at least 2 individuals. Got {len(mating_group)}')
@@ -33,8 +33,8 @@ def _check_mating_group(mating_group: t.List[t.Tuple[GenericIndividual, Record]]
     return coupling_threshold, ind_type, max_space, max_pos
 
 
-def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
-                              brood_size: int) -> t.List[GenericIndividual]:
+def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GraphIndividual, Record]],
+                              brood_size: int) -> t.List[GraphIndividual]:
     """
     Combines genes of individuals in the `mating_group` in a single pool,
     and uniformly divides these genes into `brood_size` number of individuals.
@@ -48,8 +48,8 @@ def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GenericIndividual, Re
     return [ind_type(list(genes), coupling_threshold, max_space, max_pos) for genes in chunks]
 
 
-def recombine_into(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
-                   brood_size: int) -> t.List[GenericIndividual]:
+def recombine_into(mating_group: t.List[t.Tuple[GraphIndividual, Record]],
+                   brood_size: int) -> t.List[GraphIndividual]:
     """
     Take all genes and distribute them into progeny.
     For two individuals with N genes and `brood_size=1`, the single offspring will have 2N genes.
@@ -63,8 +63,8 @@ def recombine_into(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
     return [ind_type(list(genes), coupling_threshold, max_space, max_pos) for genes in chunks]
 
 
-def exchange_fraction(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
-                      brood_size: int, fraction: float = 0.1) -> t.List[GenericIndividual]:
+def exchange_fraction(mating_group: t.List[t.Tuple[GraphIndividual, Record]],
+                      brood_size: int, fraction: float = 0.1) -> t.List[GraphIndividual]:
     """
     Takes `fraction` of genes from each Individual.
     Aggregates all taken fractions into a single pool.
@@ -83,8 +83,8 @@ def exchange_fraction(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
     return list(take(brood_size, recombined))
 
 
-def take_unchanged(mating_group: t.List[t.Tuple[GenericIndividual, Record]],
-                   brood_size: int) -> t.List[GenericIndividual]:
+def take_unchanged(mating_group: t.List[t.Tuple[GraphIndividual, Record]],
+                   brood_size: int) -> t.List[GraphIndividual]:
     """
     Randomly takes `brood_size` number of individuals from the mating groups.
     :param mating_group: A group of individuals selected to give progeny.

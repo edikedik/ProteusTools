@@ -9,7 +9,7 @@ import networkx as nx
 import pandas as pd
 from more_itertools import peekable
 
-from .base import Gene, MultiGraphEdge, AbstractIndividual, GenePool
+from .base import EdgeGene, MultiGraphEdge, AbstractGraphIndividual
 
 
 # TODO: don't forget to state the assumption that gene.P1 < gene.P2
@@ -23,7 +23,7 @@ def mut_space_size(graph: nx.MultiGraph, estimate=True) -> int:
     return reduce(op.mul, gs)
 
 
-def add_gene(gene: Gene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
+def add_gene(gene: EdgeGene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
     if gene.C >= coupling_threshold:
         return add_strong_gene(gene, graph, coupling_threshold)
     return add_weak_gene(gene, graph)
@@ -35,7 +35,7 @@ def get_node_space(graph, node):
     return (k[0] if n > node else k[1] for k, n in adj_keys)
 
 
-def add_strong_gene(gene: Gene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
+def add_strong_gene(gene: EdgeGene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
     key = gene.A1 + gene.A2
     edge = (gene.P1, gene.P2, key)
     if not graph.has_edge(gene.P1, gene.P2):
@@ -53,7 +53,7 @@ def add_strong_gene(gene: Gene, graph: nx.MultiGraph, coupling_threshold: float)
     return True
 
 
-def add_weak_gene(gene: Gene, graph: nx.MultiGraph) -> bool:
+def add_weak_gene(gene: EdgeGene, graph: nx.MultiGraph) -> bool:
     key = gene.A1 + gene.A2
     edge = (gene.P1, gene.P2, key)
     if any(starmap(
@@ -69,16 +69,16 @@ def add_weak_gene(gene: Gene, graph: nx.MultiGraph) -> bool:
     return True
 
 
-def genes2_graph(genes: t.Collection[Gene], coupling_threshold: float) -> nx.MultiGraph:
+def genes2_graph(genes: t.Collection[EdgeGene], coupling_threshold: float) -> nx.MultiGraph:
     graph = nx.MultiGraph()
     for gene in genes:
         add_gene(gene, graph, coupling_threshold)
     return graph
 
 
-class GenericIndividual(AbstractIndividual):
+class GraphIndividual(AbstractGraphIndividual):
     # multiple strong links, single weak link
-    def __init__(self, genes: t.Optional[GenePool], coupling_threshold: float = 0,
+    def __init__(self, genes: t.Optional[t.Collection[EdgeGene]], coupling_threshold: float = 0,
                  max_mut_space: bool = True, max_num_positions: bool = False,
                  graph: t.Optional[nx.Graph] = None, upd_immediately: bool = True):
         if not (genes or graph):
@@ -97,13 +97,14 @@ class GenericIndividual(AbstractIndividual):
         return self._graph.number_of_edges()
 
     def __repr__(self) -> str:
-        return f'GenericIndividual(num_genes={len(self.genes())}, num_pos={self.n_pos}, ' \
+        return f'GraphIndividual(num_genes={len(self.genes())}, num_pos={self.n_pos}, ' \
                f'score={self.score}, space_size={self.mut_space_size})'
 
-    def copy(self) -> 'GenericIndividual':
+    def copy(self) -> 'GraphIndividual':
         # Mutable graph object is the only one requiring explicit copying
-        new = GenericIndividual(None, self.coupling_threshold, self.max_mut_space, self.max_num_positions,
-                                self._graph.copy(), False)
+        new = GraphIndividual(
+            None, self.coupling_threshold, self.max_mut_space, self.max_num_positions,
+            self._graph.copy(), False)
         new._set_mut_space_size(self._mut_space_size)
         new._set_score(self._score)
         new._set_n_pos(self._n_pos)
@@ -142,7 +143,7 @@ class GenericIndividual(AbstractIndividual):
         induced_graph = self._graph.edge_subgraph(self.strong_links())
         return (induced_graph.subgraph(x) for x in nx.connected_components(induced_graph))
 
-    def genes(self) -> t.List[Gene]:
+    def genes(self) -> t.List[EdgeGene]:
         return [data['gene'] for _, _, data in self._graph.edges.data()]
 
     def strong_links(self) -> t.Iterator[MultiGraphEdge]:
@@ -182,11 +183,11 @@ class GenericIndividual(AbstractIndividual):
         self._n_pos = agg(map(len, nx.connected_components(self.graph)))
         return self._n_pos
 
-    def upd(self) -> 'GenericIndividual':
+    def upd(self) -> 'GraphIndividual':
         self.upd_score(), self.upd_mut_space_size(), self.upd_n_pos()
         return self
 
-    def remove_genes(self, genes: t.Iterable[Gene], update: bool = True) -> 'GenericIndividual':
+    def remove_genes(self, genes: t.Iterable[EdgeGene], update: bool = True) -> 'GraphIndividual':
         graph_changed = False
         for g in genes:
             e = (g.P1, g.P2, g.A1 + g.A2)
@@ -197,7 +198,7 @@ class GenericIndividual(AbstractIndividual):
             return self.upd()
         return self
 
-    def add_genes(self, genes: t.Iterable[Gene], update: bool = True) -> 'GenericIndividual':
+    def add_genes(self, genes: t.Iterable[EdgeGene], update: bool = True) -> 'GraphIndividual':
         genes = peekable(genes)
         if not genes.peek(0):
             return self
@@ -206,11 +207,11 @@ class GenericIndividual(AbstractIndividual):
             return self.upd()
         return self
 
-    def add_gene(self, gene: Gene) -> bool:
+    def add_gene(self, gene: EdgeGene) -> bool:
         return add_gene(gene, self.graph, self.coupling_threshold)
 
 
-class AverageIndividual(GenericIndividual):
+class AverageIndividual(GraphIndividual):
     def upd_score(self) -> 'AverageIndividual':
         self._score = round(
             sum(mean(data['gene'].S for _, _, data in gg) for _, gg in groupby(
@@ -220,7 +221,7 @@ class AverageIndividual(GenericIndividual):
         return self._score
 
 
-Individual = t.TypeVar('Individual', bound=GenericIndividual)
+Individual = t.TypeVar('Individual', bound=GraphIndividual)
 
 
 def population_to_df(population: t.Iterable[Individual]) -> pd.DataFrame:
@@ -232,16 +233,17 @@ def population_to_df(population: t.Iterable[Individual]) -> pd.DataFrame:
     return pd.concat([agg_ind(i, ind) for i, ind in enumerate(population)])
 
 
-def population_from_df(df: t.Union[pd.DataFrame, str],
-                       individual_type=GenericIndividual,
-                       **kwargs) -> t.List[GenericIndividual]:
+def population_from_df(
+        df: t.Union[pd.DataFrame, str],
+        individual_type=GraphIndividual,
+        **kwargs) -> t.List[GraphIndividual]:
     if isinstance(df, str):
         df = pd.read_csv(df, sep='\t')
     for col in ['P1', 'P2', 'A1', 'A2', 'C', 'S']:
         if col not in df.columns:
             raise ValueError(f'Expected column {col} in the df')
 
-    gene_groups = df.groupby('Ind').apply(lambda group: [Gene(*g[1:]) for g in group.itertuples()])
+    gene_groups = df.groupby('Ind').apply(lambda group: [EdgeGene(*g[1:]) for g in group.itertuples()])
     return [individual_type(genes, **kwargs) for genes in gene_groups]
 
 
