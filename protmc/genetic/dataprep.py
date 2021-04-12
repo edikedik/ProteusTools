@@ -114,10 +114,17 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
             else np.nan
             for _, pos, seq, aff in df[[cols.pos, cols.seq_subset, cols.affinity]].itertuples()]
         failed_idx = df['coupling'].isna()
-        if failed_idx.any():
+        num_failed = int(failed_idx.sum())
+        if num_failed:
             failed_pairs = ",".join(f'{x.pos}_{x.seq_subset}' for x in df[failed_idx].itertuples())
-            logging.warning(f'There are {len(df[failed_idx])} pairs with no singleton(s) score(s): {failed_pairs}')
-        df = df[~failed_idx]
+            logging.warning(f'There are {num_failed} pairs with no singleton(s) score(s): {failed_pairs}')
+        if params.Default_coupling is not None:
+            df.loc[failed_idx, 'coupling'] = params.Default_coupling
+            logging.info(f'Set default value {params.Default_coupling} on '
+                         f'{num_failed} pairs with no singleton(s) score(s)')
+        else:
+            df = df[~failed_idx]
+            logging.info(f'Excluded {num_failed} pairs with no singleton(s) score(s)')
     else:
         df['coupling'] = np.nan
 

@@ -88,6 +88,7 @@ class ParsingParams:
     Use_singletons: bool = False
     Exclude_types: t.List[t.Tuple[t.Union[str, int], str]] = field(default_factory=list)
     Exclude_pairs: t.List[t.Tuple[int, int]] = field(default_factory=list)
+    Default_coupling: t.Optional[float] = None
 
 
 class AbstractGraphIndividual(metaclass=ABCMeta):
