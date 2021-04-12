@@ -12,7 +12,7 @@ from genetic.evolvers import GenericEvolver
 from more_itertools import unzip
 from tqdm import tqdm
 
-from .base import GeneticParams, Record
+from .base import GeneticParams, Record, EdgeGene
 from .crossover import recombine_genes_uniformly, take_unchanged
 from .individual import GraphIndividual
 from .mutator import Mutator, BucketMutator
@@ -64,15 +64,6 @@ class GA:
         # Setup placeholders
         self.populations = populations
         self.records = records
-
-    def spawn_populations(self, n: int, overwrite: bool = True, individual_type=GraphIndividual,
-                          from_strong_edges: bool = True) -> t.List[t.List[GraphIndividual]]:
-        pool = ([g for g in self.genetic_params.Gene_pool if g.C >= self.genetic_params.Coupling_threshold]
-                if from_strong_edges else None)
-        populations = ray.get([_spawn_remote.remote(self.genetic_params, individual_type, pool) for _ in range(n)])
-        if overwrite:
-            self.populations, self.records = populations, None
-        return populations
 
     def flatten(self):
         if self.populations is None:
@@ -162,8 +153,15 @@ class GA:
         return populations, records, callbacks
 
 
-@ray.remote
-def _spawn_remote(genetic_params: GeneticParams, individual_type, pool=None):
+def spawn_graph_populations(
+        n: int, genetic_params: GeneticParams, pool: t.Optional[t.Collection[EdgeGene]] = None,
+        individual_type=GraphIndividual) -> t.List[t.List[GraphIndividual]]:
+
+    return [spawn_graph_individual(genetic_params, individual_type, pool) for _ in tqdm(
+        range(n), total=n, desc='Spawning populations')]
+
+
+def spawn_graph_individual(genetic_params: GeneticParams, individual_type, pool=None):
     return [
         individual_type(
             sample(pool or genetic_params.Gene_pool, genetic_params.Individual_base_size),
