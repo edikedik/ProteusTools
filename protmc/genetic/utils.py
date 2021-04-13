@@ -105,9 +105,17 @@ def dist_mat(graphs: t.Sequence[nx.Graph], n_jobs: int = 20):
     """Compute distance matrix using `Dist(g1, g2) = sum of number of different types at each position`."""
     size = len(graphs)
     base = np.zeros(shape=(size, size))
-    staged_data = tqdm(product(enumerate(graphs), repeat=2), total=size ** 2, desc='Distance matrix')
+    staged_data = []
+    for i in range(size):
+        for j in range(size):
+            if i <= j:
+                staged_data.append((i, graphs[i], j, graphs[j]))
+    staged_data = tqdm(
+        staged_data,
+        desc='Distance matrix')
+
     with Pool(n_jobs) as workers:
-        distances = workers.map(lambda x: dist(x[0][0], x[0][1], x[1][0], x[1][1]), staged_data)
+        distances = workers.starmap(dist, staged_data)
     for i, j, d in distances:
         base[i][j] = d
         base[j][i] = d
