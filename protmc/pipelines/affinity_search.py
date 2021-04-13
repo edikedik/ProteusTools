@@ -188,13 +188,16 @@ class AffinitySearch:
             fs = [Flattener(id_=i, **setup.__dict__) for i in range(len(workers))]
         else:
             assert len(setup) == len(workers)
-            fs = [Flattener(id_=i, **setup.__dict__) for i, s in enumerate(setup)]
+            fs = [Flattener(id_=i, **s.__dict__) for i, s in enumerate(setup)]
 
         handles = [flatten_pair.remote(p, f) for p, f in zip(workers.values(), fs)]
         all_ids = set(workers)
         while handles:
             remain = all_ids - self._done_ids
-            logging.info(f'Remaining {len(remain)} our of {len(all_ids)}: {remain}')
+            msg = f'Remaining {len(remain)} our of {len(all_ids)}'
+            if len(remain) <= 10:
+                msg += f': {remain}'
+            logging.info(msg)
 
             pair_done, handles = ray.wait(handles)
             adapt, mc, step = ray.get(pair_done[0])
