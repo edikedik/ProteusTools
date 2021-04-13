@@ -1,8 +1,7 @@
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import chain, groupby, starmap
-from math import log
+from itertools import groupby
 from statistics import mean
 
 import networkx as nx
@@ -10,70 +9,10 @@ import pandas as pd
 from more_itertools import peekable
 
 from .base import EdgeGene, MultiGraphEdge, AbstractGraphIndividual
+from .utils import add_gene, genes2_graph, mut_space_size
 
 
 # TODO: don't forget to state the assumption that gene.P1 < gene.P2
-
-
-def mut_space_size(graph: nx.MultiGraph, estimate=True) -> int:
-    xs = sorted(chain.from_iterable(((fr, key[0]), (to, key[1])) for fr, to, key in graph.edges))
-    gs = (len(set(g)) for _, g in groupby(xs, key=op.itemgetter(0)))
-    if estimate:
-        return sum(map(log, gs))
-    return reduce(op.mul, gs)
-
-
-def add_gene(gene: EdgeGene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
-    if gene.C >= coupling_threshold:
-        return add_strong_gene(gene, graph, coupling_threshold)
-    return add_weak_gene(gene, graph)
-
-
-def get_node_space(graph, node):
-    adj_keys = chain.from_iterable(
-        ((k, n) for k in v) for n, v in graph[node].items())
-    return (k[0] if n > node else k[1] for k, n in adj_keys)
-
-
-def add_strong_gene(gene: EdgeGene, graph: nx.MultiGraph, coupling_threshold: float) -> bool:
-    key = gene.A1 + gene.A2
-    edge = (gene.P1, gene.P2, key)
-    if not graph.has_edge(gene.P1, gene.P2):
-        graph.add_edge(*edge, gene=gene)
-        return True
-    keys = graph[gene.P1][gene.P2]
-    if key in keys:
-        return False
-    if len(keys) > 1:
-        graph.add_edge(*edge, gene=gene)
-        return True
-    if graph[gene.P1][gene.P2][next(iter(keys))]['gene'].C < coupling_threshold:
-        graph.remove_edge(gene.P1, gene.P2, next(iter(keys)))
-    graph.add_edge(*edge, gene=gene)
-    return True
-
-
-def add_weak_gene(gene: EdgeGene, graph: nx.MultiGraph) -> bool:
-    key = gene.A1 + gene.A2
-    edge = (gene.P1, gene.P2, key)
-    if any(starmap(
-            lambda p, a: p in graph and not any(x == a for x in get_node_space(graph, p)),
-            [(gene.P1, gene.A1), (gene.P2, gene.A2)])):
-        return False
-    if graph.has_edge(gene.P1, gene.P2):
-        keys = graph[gene.P1][gene.P2]
-        if len(keys) > 1:
-            return False
-        graph.remove_edge(gene.P1, gene.P2, next(iter(keys)))
-    graph.add_edge(*edge, gene=gene)
-    return True
-
-
-def genes2_graph(genes: t.Collection[EdgeGene], coupling_threshold: float) -> nx.MultiGraph:
-    graph = nx.MultiGraph()
-    for gene in genes:
-        add_gene(gene, graph, coupling_threshold)
-    return graph
 
 
 class GraphIndividual(AbstractGraphIndividual):
@@ -212,6 +151,21 @@ class GraphIndividual(AbstractGraphIndividual):
 
 
 class AverageIndividual(GraphIndividual):
+
+    def __repr__(self) -> str:
+        return f'AverageIndividual(num_genes={len(self.genes())}, num_pos={self.n_pos}, ' \
+               f'score={self.score}, space_size={self.mut_space_size})'
+
+    def copy(self) -> 'AverageIndividual':
+        # Mutable graph object is the only one requiring explicit copying
+        new = AverageIndividual(
+            None, self.coupling_threshold, self.max_mut_space, self.max_num_positions,
+            self._graph.copy(), False)
+        new._set_mut_space_size(self._mut_space_size)
+        new._set_score(self._score)
+        new._set_n_pos(self._n_pos)
+        return new
+
     def upd_score(self) -> 'AverageIndividual':
         self._score = round(
             sum(mean(data['gene'].S for _, _, data in gg) for _, gg in groupby(
