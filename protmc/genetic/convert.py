@@ -51,7 +51,9 @@ def cc_to_worker_pair(cc: CC, setup: AffinitySetup, param_pair: t.Tuple[Param_se
     return setup_worker(param_pair[0]), setup_worker(param_pair[1])
 
 
-def setup_population(population: t.Iterable[GraphIndividual], setup: AffinitySetup, min_mut_space_size: int = 3):
+def setup_population(
+        population: t.Iterable[GraphIndividual], setup: AffinitySetup,
+        mut_space_size_bounds: t.Tuple[t.Optional[float], t.Optional[float]] = (None, None)):
     if setup.combinations is not None:
         warn('Existing `combinations` attribute will be overwritten')
 
@@ -68,13 +70,17 @@ def setup_population(population: t.Iterable[GraphIndividual], setup: AffinitySet
     param_pairs = setup.prepare_params()
 
     cc2workers, workers = {}, {}
+    min_size, max_size = mut_space_size_bounds
     for cc, chunk in zip(cc2ind, chunked(param_pairs, 2)):
-        if cc.MutSpaceSize >= min_mut_space_size:
-            ((apo_adapt, apo_mc), (holo_adapt, holo_mc)) = map(
-                lambda p: cc_to_worker_pair(cc, setup, p, base_constraints), chunk)
-            workers[(apo_adapt.id, apo_mc.id)] = apo_adapt, apo_mc
-            workers[(holo_adapt.id, holo_mc.id)] = holo_adapt, holo_mc
-            cc2workers[cc] = ((apo_adapt, apo_mc), (holo_adapt, holo_mc))
+        if min_size is not None and cc.MutSpaceSize < min_size:
+            continue
+        if max_size is not None and cc.MutSpaceSize > max_size:
+            continue
+        ((apo_adapt, apo_mc), (holo_adapt, holo_mc)) = map(
+            lambda p: cc_to_worker_pair(cc, setup, p, base_constraints), chunk)
+        workers[(apo_adapt.id, apo_mc.id)] = apo_adapt, apo_mc
+        workers[(holo_adapt.id, holo_mc.id)] = holo_adapt, holo_mc
+        cc2workers[cc] = ((apo_adapt, apo_mc), (holo_adapt, holo_mc))
 
     return cc2ind, cc2workers, workers
 
