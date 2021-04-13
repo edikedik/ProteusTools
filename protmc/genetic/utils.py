@@ -1,10 +1,13 @@
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import chain, groupby, starmap
+from itertools import chain, groupby, starmap, product
 from math import log
 
 import networkx as nx
+import numpy as np
+from ray.util.multiprocessing import Pool
+from tqdm import tqdm
 
 from .base import EdgeGene
 
@@ -13,7 +16,7 @@ def get_attr(graph: nx.Graph, attr: str):
     return [data[attr] for _, _, data in graph.edges.data()]
 
 
-def mut_space(graph: nx.Graph) -> t.Iterable[t.Tuple[int, t.List[str]]]:
+def mut_space(graph: nx.Graph) -> t.Iterator[t.Tuple[int, t.List[str]]]:
     genes = get_attr(graph, 'gene')
     xs = sorted(chain.from_iterable(((g.P1, g.A1), (g.P2, g.A2)) for g in genes))
     return ((g, sorted(set(x[1] for x in gg))) for g, gg in groupby(xs, key=op.itemgetter(0)))
@@ -78,6 +81,37 @@ def genes2_graph(genes: t.Collection[EdgeGene], coupling_threshold: float) -> nx
     for gene in genes:
         add_gene(gene, graph, coupling_threshold)
     return graph
+
+
+def dist(i1: int, g1: nx.Graph, i2: int, g2: nx.Graph) -> t.Tuple[int, int, float]:
+    """
+    Compute distance between two graphs.
+    Dist(g1, g2) = sum of number of different types at each position.
+    """
+    space1, space2 = map(dict, map(mut_space, [g1, g2]))
+    d = 0
+    for k in set(list(space1) + list(space2)):
+        if k in space1 and k in space2:
+            d += len(set(space1[k]).symmetric_difference(set(space2[k])))
+            continue
+        if k in space1:
+            d += len(set(space1[k]))
+        if k in space2:
+            d += len(set(space2[k]))
+    return i1, i2, d
+
+
+def dist_mat(graphs: t.Sequence[nx.Graph], n_jobs: int = 20):
+    """Compute distance matrix using `Dist(g1, g2) = sum of number of different types at each position`."""
+    size = len(graphs)
+    base = np.zeros(shape=(size, size))
+    staged_data = tqdm(product(enumerate(graphs), repeat=2), total=size ** 2, desc='Distance matrix')
+    with Pool(n_jobs) as workers:
+        distances = workers.map(lambda x: dist(x[0][0], x[0][1], x[1][0], x[1][1]), staged_data)
+    for i, j, d in distances:
+        base[i][j] = d
+        base[j][i] = d
+    return base
 
 
 if __name__ == '__main__':

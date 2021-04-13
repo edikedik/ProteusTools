@@ -14,6 +14,9 @@ Columns = t.NamedTuple(
 ParsingResult = t.NamedTuple(
     'ParsingResult', [('df', pd.DataFrame), ('singletons', pd.DataFrame), ('pool', t.Collection[EdgeGene])])
 Record = t.NamedTuple('Record', [('age', int), ('score', float)])
+CC = t.NamedTuple('CCSetup', [('Positions', t.Tuple[int, ...]), ('Genes', t.Tuple[EdgeGene, ...]),
+                              ('MutSpace', t.Tuple[str, ...]), ('MutSpaceSize', int)])
+Ind = t.NamedTuple('IndSetup', [('CCs', t.List[CC]), ('WeakLinks', t.List[EdgeGene])])
 MultiGraphEdge = t.Tuple[int, int, str]
 
 

@@ -178,6 +178,15 @@ class AverageIndividual(GraphIndividual):
 Individual = t.TypeVar('Individual', bound=GraphIndividual)
 
 
+def sep_graph_ind(ind: GraphIndividual) -> t.Iterator[GraphIndividual]:
+    """Spawn sub-individuals based on ccs"""
+    return (GraphIndividual(
+        genes=None, coupling_threshold=ind.coupling_threshold,
+        max_mut_space=ind.max_mut_space,
+        max_num_positions=ind.max_num_positions,
+        graph=g, upd_immediately=True) for g in ind.ccs)
+
+
 def population_to_df(population: t.Iterable[Individual]) -> pd.DataFrame:
     def agg_ind(i, ind):
         df = pd.DataFrame(ind.genes())

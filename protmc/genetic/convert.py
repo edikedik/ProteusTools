@@ -9,15 +9,12 @@ import networkx as nx
 from more_itertools import chunked
 
 from protmc.operators import ADAPT, MC
-from .base import EdgeGene
+from .base import CC, Ind
 from .individual import GraphIndividual
 from ..common import AminoAcidDict
 from ..common.utils import replace_constraints
 from ..pipelines.affinity_search import AffinitySetup, Param_set
 
-CC = t.NamedTuple('CCSetup', [('Positions', t.Tuple[int, ...]), ('Genes', t.Tuple[EdgeGene, ...]),
-                              ('MutSpace', t.Tuple[str, ...]), ('MutSpaceSize', int)])
-Ind = t.NamedTuple('IndSetup', [('CCs', t.List[CC]), ('WeakLinks', t.List[EdgeGene])])
 Worker = t.Union[ADAPT, MC]
 
 
