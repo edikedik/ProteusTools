@@ -202,11 +202,16 @@ class BestStateKeeper(AbstractCallback):
             return worker
         if worker.id not in self._memory:
             self._memory[worker.id] = MCState(worker.summary, bias.bias, worker.seqs)
-            return worker
-        prev_cov = self._memory[worker.id].Summary.coverage
-        curr_cov = worker.summary.coverage
-        if curr_cov > prev_cov:
-            self._memory[worker.id] = MCState(worker.summary, bias.bias, worker.seqs)
+        else:
+            prev_cov = self._memory[worker.id].Summary.coverage
+            curr_cov = worker.summary.coverage
+            if curr_cov > prev_cov:
+                self._memory[worker.id] = MCState(worker.summary, bias.bias, worker.seqs)
+        if self.dump_to_workdir:
+            bias.dump(f'{worker.params.working_dir}/{self.dump_name_bias}')
+            worker.seqs.to_csv(
+                f'{worker.params.working_dir}/{self.dump_name_seq_count}',
+                sep='\t', index=False)
         return worker
 
 
