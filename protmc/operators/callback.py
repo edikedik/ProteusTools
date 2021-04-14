@@ -1,9 +1,11 @@
 from collections import defaultdict
 import typing as t
 import logging
+from pathlib import Path
 
 import pandas as pd
 
+from protmc.common.base import MCState
 from protmc.basic import Bias
 from protmc.common.base import AbstractCallback, AbstractWorker, Id
 from protmc.operators import ADAPT, Worker, MC
@@ -174,6 +176,38 @@ class McConstrainer(Constrainer):
         if self.ref_states is not None:
             bias = bias.center_at_ref(self.ref_states, overwrite=False)
         return bias.bias
+
+
+class BestStateKeeper(AbstractCallback):
+    def __init__(
+            self, id_=None, dump_to_workdir: bool = True,
+            dump_name_bias: str = 'ADAPT.best.dat',
+            dump_name_seq_count: str = 'RESULTS.best.tsv'):
+        super().__init__(id_)
+        self.dump_to_workdir = dump_to_workdir
+        self.dump_name_bias = dump_name_bias
+        self.dump_name_seq_count = dump_name_seq_count
+        self._memory: t.Dict[str, MCState] = {}
+
+    def __call__(self, worker: MC) -> MC:
+        if worker.summary is None:
+            return worker
+        bias_path = worker.params.config.get_field_value('Bias_Input_File')
+        if not bias_path or not Path(bias_path).exists():
+            logging.warning(f'BestStateKeeper {self.id} -- no bias for worker {worker.id}')
+            return worker
+        bias = Bias().read_adapt_output(bias_path)
+        if worker.seqs is None:
+            logging.warning(f'BestStateKeeper {self.id} -- no seqs for worker {worker.id}')
+            return worker
+        if worker.id not in self._memory:
+            self._memory[worker.id] = MCState(worker.summary, bias.bias, worker.seqs)
+            return worker
+        prev_cov = self._memory[worker.id].Summary.coverage
+        curr_cov = worker.summary.coverage
+        if curr_cov > prev_cov:
+            self._memory[worker.id] = MCState(worker.summary, bias.bias, worker.seqs)
+        return worker
 
 
 if __name__ == '__main__':
