@@ -9,36 +9,31 @@ import networkx as nx
 from more_itertools import chunked
 
 from protmc.operators import ADAPT, MC
-from .base import CC, Ind
+from .base import CC
 from .individual import GraphIndividual
+from .utils import get_attr
 from ..common import AminoAcidDict
-from ..common.utils import replace_constraints
+from ..common.utils import union_constraints
 from ..pipelines.affinity_search import AffinitySetup, Param_set
 
 Worker = t.Union[ADAPT, MC]
 
 
-def prepare_cc(cc: nx.MultiGraph) -> CC:
+def prepare_cc(cc: nx.MultiGraph, base_constraints: t.List[str]) -> CC:
     mapping = AminoAcidDict().aa_dict
-    genes = tuple(d['gene'] for _, _, d in cc.edges.data())
-    pairs_flat = sorted(chain(((g.P1, g.A1) for g in genes), ((g.P2, g.A2) for g in genes)))
-    mut_space = [(g, {mapping[x[1]] for x in gg}) for g, gg in groupby(pairs_flat, lambda x: x[0])]
-    mut_space_size = reduce(op.mul, map(len, map(op.itemgetter(1), mut_space)))
-    positions = tuple(map(op.itemgetter(0), mut_space))
-    mut_space = tuple(f'{pos} {" ".join(sorted(types))}' for pos, types in mut_space)
+    genes = tuple(get_attr(cc, 'gene'))
+    pos_types = sorted(chain(((g.P1, g.A1) for g in genes), ((g.P2, g.A2) for g in genes)))
+    pos_group = groupby(pos_types, lambda x: x[0])
+    mut_space = [f'{pos} {" ".join(set(mapping[x[1]] for x in types))}' for pos, types in pos_group]
+    positions = tuple(int(x.split()[0]) for x in mut_space)
+    mut_space = tuple(union_constraints(chain(base_constraints, mut_space)))
+    mut_space_size = reduce(op.mul, (len(x.split()[1:]) for x in mut_space))
     return CC(positions, genes, mut_space, mut_space_size)
 
 
-def prepare_individual(ind: GraphIndividual) -> Ind:
-    ccs = list(map(prepare_cc, ind.ccs))
-    weak_links = [ind.graph.edges[e]['gene'] for e in ind.weak_links()]
-    return Ind(ccs, weak_links)
-
-
-def cc_to_worker_pair(cc: CC, setup: AffinitySetup, param_pair: t.Tuple[Param_set, Param_set],
-                      base_constraints: t.List[str]) -> t.Tuple[Worker, Worker]:
-    constraints = replace_constraints(base_constraints, cc.MutSpace)
-    space_setter = ('MC_PARAMS', 'Space_Constraints', constraints)
+def cc_to_worker_pair(
+        cc: CC, setup: AffinitySetup, param_pair: t.Tuple[Param_set, Param_set]) -> t.Tuple[Worker, Worker]:
+    space_setter = ('MC_PARAMS', 'Space_Constraints', list(cc.MutSpace))
     unique_suffix = hash(tuple(cc.MutSpace))
     comb_dir = f'{"-".join(map(str, cc.Positions))}_{cc.MutSpaceSize}_{unique_suffix}'
 
@@ -60,10 +55,10 @@ def setup_population(
     mapping = AminoAcidDict().aa_dict
     base_constraints = [f'{p} {mapping[a]}' for p, a in zip(setup.active_pos, setup.reference_seq)]
 
-    prepared = map(prepare_individual, population)
+    prepared = map(lambda ind_: map(lambda cc_: prepare_cc(cc_, base_constraints), ind_.ccs), population)
     cc2ind = defaultdict(list)
     for ind in prepared:
-        for cc in ind.CCs:
+        for cc in ind:
             cc2ind[cc].append(ind)
 
     setup.combinations = [cc.Positions for cc in cc2ind]
@@ -77,7 +72,7 @@ def setup_population(
         if max_size is not None and cc.MutSpaceSize > max_size:
             continue
         ((apo_adapt, apo_mc), (holo_adapt, holo_mc)) = map(
-            lambda p: cc_to_worker_pair(cc, setup, p, base_constraints), chunk)
+            lambda p: cc_to_worker_pair(cc, setup, p), chunk)
         workers[(apo_adapt.id, apo_mc.id)] = apo_adapt, apo_mc
         workers[(holo_adapt.id, holo_mc.id)] = holo_adapt, holo_mc
         cc2workers[cc] = ((apo_adapt, apo_mc), (holo_adapt, holo_mc))
