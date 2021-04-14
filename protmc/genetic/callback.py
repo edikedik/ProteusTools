@@ -7,7 +7,7 @@ from statistics import mean
 from genetic.base import Operators, Callback
 
 from .base import Record
-from .individual import GraphIndividual
+from .individual import Individual
 
 
 class Accumulator(Callback):
@@ -22,8 +22,8 @@ class Accumulator(Callback):
 
 class ProgressSaver(Accumulator):
 
-    def __call__(self, individuals: t.List[GraphIndividual], records: t.List[Record], operators: Operators) \
-            -> t.Tuple[t.List[GraphIndividual], t.List[Record], Operators]:
+    def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
+            -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
         self.generation += 1
         if self.generation % self.freq == 0:
             scores = [r.score for r in records]
@@ -41,8 +41,8 @@ class PopulationGeneCounter(Accumulator):
         super().__init__(freq)
         self.last_genes = set()
 
-    def __call__(self, individuals: t.List[GraphIndividual], records: t.List[Record], operators: Operators) \
-            -> t.Tuple[t.List[GraphIndividual], t.List[Record], Operators]:
+    def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
+            -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
         self.generation += 1
         if self.generation % self.freq == 0:
             current_genes = set(chain.from_iterable(ind.genes() for ind in individuals))
@@ -56,8 +56,8 @@ class PopulationGeneCounter(Accumulator):
 
 class UniqueGeneCounter(Accumulator):
 
-    def __call__(self, individuals: t.List[GraphIndividual], records: t.List[Record], operators: Operators) \
-            -> t.Tuple[t.List[GraphIndividual], t.List[Record], Operators]:
+    def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
+            -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
         self.generation += 1
         if self.generation % self.freq == 0:
             ind_genes = [set(ind.genes()) for ind in individuals]
@@ -89,10 +89,10 @@ class BestKeeper(Callback):
     def __init__(self, agg_func=max):
         self.key = agg_func
         self.generation: int = 0
-        self.chosen_one: t.Optional[t.Tuple[GraphIndividual, Record]] = None
+        self.chosen_one: t.Optional[t.Tuple[Individual, Record]] = None
 
-    def __call__(self, individuals: t.List[GraphIndividual], records: t.List[Record], operators: Operators) \
-            -> t.Tuple[t.List[GraphIndividual], t.List[Record], Operators]:
+    def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
+            -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
         self.generation += 1
         current_best = max(zip(individuals, records), key=lambda x: x[1].score)
         if self.chosen_one is None or current_best[1].score > self.chosen_one[1].score:

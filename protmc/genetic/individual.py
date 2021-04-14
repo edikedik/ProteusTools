@@ -176,7 +176,7 @@ class AverageIndividual(GraphIndividual):
 
 
 class SeqIndividual(AbstractSeqIndividual):
-    def __init__(self, genes: t.Collection[SeqGene], upd_on_init: bool = True):
+    def __init__(self, genes: t.Iterable[SeqGene], upd_on_init: bool = True):
         self._genes = set(genes)
         self._score = 0
         self._n_pos = 0
@@ -205,20 +205,20 @@ class SeqIndividual(AbstractSeqIndividual):
         self._score = sum(g.S for g in self.genes)
         self._n_pos = len(reduce(op.or_, (set(g.Pos) for g in self.genes)))
 
-    def add_genes(self, genes: t.Collection[SeqGene], update: bool = False) -> 'SeqIndividual':
+    def add_genes(self, genes: t.Iterable[SeqGene], update: bool = True) -> 'SeqIndividual':
         genes_upd = self._genes | set(genes)
         if update:
             self._genes = genes_upd
         return SeqIndividual(genes_upd)
 
-    def remove_genes(self, genes: t.Collection[SeqGene], update: bool = False) -> 'SeqIndividual':
+    def remove_genes(self, genes: t.Iterable[SeqGene], update: bool = True) -> 'SeqIndividual':
         genes_upd = self._genes - set(genes)
         if update:
             self._genes = genes_upd
         return SeqIndividual(genes_upd)
 
 
-Individual = t.TypeVar('Individual', bound=GraphIndividual)
+Individual = t.TypeVar('Individual', bound=t.Union[GraphIndividual, SeqIndividual])
 
 
 def sep_graph_ind(ind: GraphIndividual) -> t.Iterator[GraphIndividual]:
@@ -239,7 +239,7 @@ def population_to_df(population: t.Iterable[Individual]) -> pd.DataFrame:
     return pd.concat([agg_ind(i, ind) for i, ind in enumerate(population)])
 
 
-def population_from_df(
+def graph_population_from_df(
         df: t.Union[pd.DataFrame, str],
         individual_type=GraphIndividual,
         **kwargs) -> t.List[GraphIndividual]:
@@ -251,6 +251,19 @@ def population_from_df(
 
     gene_groups = df.groupby('Ind').apply(lambda group: [EdgeGene(*g[1:]) for g in group.itertuples()])
     return [individual_type(genes, **kwargs) for genes in gene_groups]
+
+
+def seq_population_from_df(
+        df: t.Union[pd.DataFrame, str],
+        **kwargs) -> t.List[SeqIndividual]:
+    if isinstance(df, str):
+        df = pd.read_csv(df, sep='\t')
+    for col in ['Seq', 'Pos', 'S']:
+        if col not in df.columns:
+            raise ValueError(f'Expected column {col} in the df')
+
+    gene_groups = df.groupby('Ind').apply(lambda group: [SeqGene(*g[1:]) for g in group.itertuples()])
+    return [SeqIndividual(genes, **kwargs) for genes in gene_groups]
 
 
 if __name__ == '__main__':

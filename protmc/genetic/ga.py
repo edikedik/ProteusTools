@@ -15,7 +15,7 @@ from tqdm import tqdm
 from .base import GeneticParams, Record, EdgeGene
 from .crossover import recombine_genes_uniformly, take_unchanged
 from .individual import GraphIndividual
-from .mutator import Mutator, BucketMutator
+from .mutator import Mutator
 from .score import score
 
 
@@ -48,14 +48,10 @@ class GA:
             crossover=self.crossover_fn,
             nmates=genetic_params.Number_of_mates,
             broodsize=genetic_params.Brood_size)
-        if genetic_params.Use_BucketMutator:
-            self._mutator = BucketMutator(
-                genetic_params.Gene_pool, genetic_params.Mutation_size)
-        else:
-            self._mutator = Mutator(
-                genetic_params.Gene_pool, genetic_params.Mutation_size,
-                genetic_params.Deletion_size, genetic_params.Acquisition_size,
-                ps=genetic_params.Probabilities)
+        self._mutator = Mutator(
+            genetic_params.Gene_pool, genetic_params.Mutation_size,
+            genetic_params.Deletion_size, genetic_params.Acquisition_size,
+            ps=genetic_params.Probabilities)
         self._policy = ops.GenericPolicy(selector=self.policy_fn)
         self._evolver = GenericEvolver()
         self.ops = Operators(self._recorder, self._estimator, self._selector,

@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 import networkx as nx
 import pandas as pd
 
-Gene = t.TypeVar('Gene')
 EdgeGene = t.NamedTuple('EdgeGene', [('P1', int), ('P2', int), ('A1', str), ('A2', str), ('S', float), ('C', float)])
 SeqGene = t.NamedTuple('SeqGene', [('Seq', str), ('Pos', t.Tuple[int, ...]), ('S', float)])
+Gene = t.Union[EdgeGene, SeqGene]
 EarlyStopping = t.NamedTuple('EarlyStopping', [('Rounds', int), ('ScoreImprovement', float), ('Selector', str)])
 Bounds = t.NamedTuple('Bounds', [('lower', t.Optional[float]), ('upper', t.Optional[float])])
 Columns = t.NamedTuple(
@@ -48,7 +48,7 @@ class GeneticParams:
     Individual_base_size: int = 50
     Brood_size: int = 1
     Number_of_mates: int = 2
-    Use_BucketMutator: bool = False
+    # Use_BucketMutator: bool = False
     Crossover_mode: str = 'recombine_genes_uniformly'
     Deletion_size: int = 1
     Acquisition_size: int = 1
@@ -90,6 +90,7 @@ class ParsingParams:
     Scale_range: Bounds = Bounds(0, 1)
     Reverse_score: bool = True
     Use_singletons: bool = False
+    Use_couplings: bool = False
     Exclude_types: t.List[t.Tuple[t.Union[str, int], str]] = field(default_factory=list)
     Exclude_pairs: t.List[t.Tuple[int, int]] = field(default_factory=list)
     Default_coupling: t.Optional[float] = None

@@ -105,7 +105,7 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     else:
         df = pairs
 
-    if len(singletons):
+    if params.Use_couplings and len(singletons):
         score_mapping = {(pos.split('-')[0], seq[0]): aff for _, pos, seq, aff in singletons[
             [cols.pos, cols.seq_subset, cols.affinity]].itertuples()}
         df['coupling'] = [

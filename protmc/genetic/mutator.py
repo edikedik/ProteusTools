@@ -5,12 +5,12 @@ from warnings import warn
 
 import numpy as np
 
-from .base import EdgeGene
-from .individual import GraphIndividual
+from .base import Gene, EdgeGene
+from .individual import Individual, GraphIndividual
 
 
 class Mutator:
-    def __init__(self, pool: t.Sequence[EdgeGene], mutation_size: int, deletion_size: int, acquisition_size: int,
+    def __init__(self, pool: t.Sequence[Gene], mutation_size: int, deletion_size: int, acquisition_size: int,
                  ps: t.Tuple[float, float, float], copy_individuals: bool = False):
         self.pool = pool
         self.mutation_size = mutation_size
@@ -19,14 +19,14 @@ class Mutator:
         self.ps = ps
         self.copy = copy_individuals
 
-    def mutation(self, individual: GraphIndividual) -> GraphIndividual:
+    def mutation(self, individual: Individual) -> Individual:
         if self.copy:
             individual = individual.copy()
         del_genes = sample(individual.genes(), self.mutation_size)
         new_genes = sample(self.pool, self.mutation_size)
         return individual.remove_genes(del_genes).add_genes(new_genes)
 
-    def deletion(self, individual: GraphIndividual) -> GraphIndividual:
+    def deletion(self, individual: Individual) -> Individual:
         if self.copy:
             individual = individual.copy()
         if len(individual) <= self.deletion_size:
@@ -35,7 +35,7 @@ class Mutator:
         del_genes = sample(individual.genes(), self.deletion_size)
         return individual.remove_genes(del_genes)
 
-    def acquisition(self, individual: GraphIndividual) -> GraphIndividual:
+    def acquisition(self, individual: Individual) -> Individual:
         if self.copy:
             individual = individual.copy()
         new_genes = sample(self.pool, self.acquisition_size)
@@ -44,12 +44,13 @@ class Mutator:
     def _choose(self):
         return np.random.choice([self.mutation, self.deletion, self.acquisition], p=self.ps)
 
-    def __call__(self, individuals: t.List[GraphIndividual]) -> t.List[GraphIndividual]:
+    def __call__(self, individuals: t.List[Individual]) -> t.List[Individual]:
         mutators = [self._choose() for _ in range(len(individuals))]
         return [f(individual) for f, individual in zip(mutators, individuals)]
 
 
 class BucketMutator:
+    # TODO: proved ineffective; consider deleting
     def __init__(self, pool: t.Sequence[EdgeGene], mutation_size: int, copy_individuals: bool = False):
         self.mutation_size = mutation_size
         self.pool = pool

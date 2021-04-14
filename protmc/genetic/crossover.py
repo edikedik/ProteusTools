@@ -5,27 +5,27 @@ from math import floor
 from more_itertools import random_permutation, take, distribute, unzip
 
 from .base import Record
-from .individual import GraphIndividual
+from .individual import GraphIndividual, Individual, SeqIndividual
 
 
 def _check_mating_group(mating_group: t.List[t.Tuple[GraphIndividual, Record]]):
     # Validate the operation
     if len(mating_group) < 2:
         raise RuntimeError(f'Mating group must contain at least 2 individuals. Got {len(mating_group)}')
-    ts = set(indiv.coupling_threshold for indiv, _ in mating_group)
+    ts = set(ind.coupling_threshold for ind, _ in mating_group)
     if len(ts) > 1:
         raise RuntimeError(f'All Individuals in the mating group must have the same coupling threshold. Got {ts}')
     coupling_threshold = ts.pop()
-    types = set(indiv.__class__ for indiv, _, in mating_group)
+    types = set(ind.__class__ for ind, _, in mating_group)
     if len(types) > 1:
         raise RuntimeError(f'All Individuals in the mating group must be of a single type. '
                            f'Got {ts} for mating group {mating_group}')
     ind_type = types.pop()
-    max_spaces = set(indiv.max_mut_space for indiv, _ in mating_group)
+    max_spaces = set(ind.max_mut_space for ind, _ in mating_group)
     if len(max_spaces) > 1:
         raise RuntimeError(f'Multiple values of `max_mut_space` attribute in the mating group.')
     max_space = max_spaces.pop()
-    max_poss = set(indiv.max_num_positions for indiv, _ in mating_group)
+    max_poss = set(ind.max_num_positions for ind, _ in mating_group)
     if len(max_spaces) > 1:
         raise RuntimeError(f'Multiple values of `max_num_pos` attribute in the mating group.')
     # Perform the recombination
@@ -33,8 +33,19 @@ def _check_mating_group(mating_group: t.List[t.Tuple[GraphIndividual, Record]]):
     return coupling_threshold, ind_type, max_space, max_pos
 
 
-def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GraphIndividual, Record]],
-                              brood_size: int) -> t.List[GraphIndividual]:
+def _init_chunks(mating_group, chunks):
+    ind_example = mating_group[0][0]
+    if isinstance(ind_example, GraphIndividual):
+        coupling_threshold, ind_type, max_space, max_pos = _check_mating_group(mating_group)
+        return [ind_type(list(genes), coupling_threshold, max_space, max_pos) for genes in chunks]
+    if isinstance(ind_example, SeqIndividual):
+        return [SeqIndividual(list(genes), upd_on_init=True) for genes in chunks]
+    else:
+        raise ValueError(f'Unrecognized individual type {ind_example.__class__}')
+
+
+def recombine_genes_uniformly(mating_group: t.List[t.Tuple[Individual, Record]],
+                              brood_size: int) -> t.List[Individual]:
     """
     Combines genes of individuals in the `mating_group` in a single pool,
     and uniformly divides these genes into `brood_size` number of individuals.
@@ -42,10 +53,9 @@ def recombine_genes_uniformly(mating_group: t.List[t.Tuple[GraphIndividual, Reco
     :param brood_size: A number of offsprings.
     :return: List of offsprings.
     """
-    coupling_threshold, ind_type, max_space, max_pos = _check_mating_group(mating_group)
-    pool = random_permutation(chain.from_iterable(indiv.genes() for indiv, _ in mating_group))
+    pool = random_permutation(chain.from_iterable(ind.genes() for ind, _ in mating_group))
     chunks = take(brood_size, distribute(len(mating_group), pool))
-    return [ind_type(list(genes), coupling_threshold, max_space, max_pos) for genes in chunks]
+    return _init_chunks(mating_group, chunks)
 
 
 def recombine_into(mating_group: t.List[t.Tuple[GraphIndividual, Record]],
@@ -57,10 +67,9 @@ def recombine_into(mating_group: t.List[t.Tuple[GraphIndividual, Record]],
     :param brood_size: A number of offsprings.
     :return: List of offsprings.
     """
-    coupling_threshold, ind_type, max_space, max_pos = _check_mating_group(mating_group)
-    pool = random_permutation(chain.from_iterable(indiv.genes() for indiv, _ in mating_group))
+    pool = random_permutation(chain.from_iterable(ind.genes() for ind, _ in mating_group))
     chunks = distribute(brood_size, pool)
-    return [ind_type(list(genes), coupling_threshold, max_space, max_pos) for genes in chunks]
+    return _init_chunks(mating_group, chunks)
 
 
 def exchange_fraction(mating_group: t.List[t.Tuple[GraphIndividual, Record]],

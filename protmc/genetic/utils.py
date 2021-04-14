@@ -1,7 +1,7 @@
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import chain, groupby, starmap, product
+from itertools import chain, groupby, starmap
 from math import log
 
 import networkx as nx

@@ -2,7 +2,7 @@ import typing as t
 
 import numpy as np
 
-from protmc.genetic.base import AbstractGraphIndividual
+from protmc.genetic.base import AbstractGraphIndividual, AbstractSeqIndividual
 
 
 def gaussian(x: t.Union[np.ndarray, float], mu: float = 0.0, sigma: float = 1.0) -> float:
@@ -25,7 +25,7 @@ def sigma_helper(desired_penalty: float, deviation: float):
     return (-deviation ** 2 / (2 * np.log(desired_penalty))) ** 1 / 2
 
 
-def score(ind: AbstractGraphIndividual,
+def score(ind: t.Union[AbstractSeqIndividual, AbstractGraphIndividual],
           min_size: int = 10, max_size: int = 100,
           pen_mut: bool = True, sigma_mut: float = 5, desired_space: float = 5 * np.log(18),
           pen_pos: bool = False, sigma_pos: float = 10, desired_pos: int = 4,
