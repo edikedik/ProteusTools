@@ -20,12 +20,13 @@ class Flattener(AbstractPoolExecutor):
                  predicate_mc: t.Optional[t.Callable[[MC], bool]] = None,
                  executor_adapt: t.Optional[AbstractExecutor] = None,
                  executor_mc: t.Optional[AbstractExecutor] = None,
-                 count_threshold: int = 1):
+                 count_threshold: int = 1, step_threshold: int = 300):
         super().__init__(id_)
         self.predicate_mc = predicate_mc
         self.predicate_adapt = predicate_adapt
         self.reference = reference
         self.count_threshold = count_threshold
+        self.step_threshold = step_threshold
         if executor_mc is None and executor_adapt is None:
             raise ValueError('Must provide at least one of the executors')
         self.executor_adapt = executor_adapt or executor_mc
@@ -71,7 +72,8 @@ class Flattener(AbstractPoolExecutor):
             logging.error(f'Both workers appear to be flattened at step 0. '
                           f'Check your stopping criteria')
         while not self.adapt_passes(adapt) or not self.mc_passes(mc):
-            logging.info(f'Flattener {self.id} of {adapt.id} and {mc.id} -- starting step {step}')
+            logging.info(f'Flattener {self.id} of {adapt.id} and {mc.id} -- starting step {step}. '
+                         f'MC pass: {self.mc_passes(mc)}, ADAPT pass: {self.adapt_passes(adapt)}')
             try:
                 adapt = self.executor_adapt(adapt)
             except Exception as e:
@@ -83,6 +85,10 @@ class Flattener(AbstractPoolExecutor):
                 raise ExecutorError(self.executor_mc, mc, e)
             logging.info(f'Flattener {self.id} of {adapt.id} and {mc.id} -- finished at step {step}')
             step += 1
+            if step >= self.step_threshold:
+                logging.info(f'Flattener {self.id} of {adapt.id} and {mc.id} -- terminating '
+                             f'due to reaching step threshold {self.step_threshold}')
+                break
         logging.info(f'Flattener {self.id} of {adapt.id} and {mc.id} -- finished at step {step}')
         return adapt, mc, step
 
