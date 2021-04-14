@@ -201,8 +201,14 @@ class SeqIndividual(AbstractSeqIndividual):
     def score(self) -> float:
         return self._score
 
+    def pos_overlap(self):
+        return len(reduce(op.and_, (set(g.Pos) for g in self.genes)))
+
     def upd(self):
-        self._score = sum(g.S for g in self.genes)
+        if self.pos_overlap():
+            self._score = 0
+        else:
+            self._score = sum(g.S for g in self.genes)
         self._n_pos = len(reduce(op.or_, (set(g.Pos) for g in self.genes)))
 
     def add_genes(self, genes: t.Iterable[SeqGene], update: bool = True) -> 'SeqIndividual':
