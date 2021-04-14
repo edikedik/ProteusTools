@@ -4,7 +4,7 @@ from random import choices
 import numpy as np
 import pytest
 
-from protmc.genetic.base import EdgeGene
+from protmc.genetic.base import EdgeGene, SeqGene
 from protmc.genetic.individual import GraphIndividual
 
 
@@ -23,14 +23,14 @@ def generate_graph_genes(
         for p, a in zip(ps, ts) if p[0] <= p[1])
 
 
-# def generate_seq_genes(n_min=2, n_max=20, s_min=2, s_max=20, ps_min=1, ps_max=10,
-#                        score_min=0.1, score_max=1.0) -> t.List[SeqGene]:
-#     types = ['A', 'B', 'C', 'D', 'E', 'F']
-#     n = np.random.randint(n_min, n_max)
-#     seqs = ["".join(choices(types, k=np.random.randint(s_min, s_max))) for _ in range(n)]
-#     ps = [tuple(np.random.randint(ps_min, ps_max, len(s))) for s in seqs]
-#     scores = np.random.uniform(score_min, score_max, n).round(2)
-#     return list(SeqGene(*x) for x in zip(seqs, ps, scores))
+def generate_seq_genes(n_min=2, n_max=20, s_min=2, s_max=20, ps_min=1, ps_max=10,
+                       score_min=0.1, score_max=1.0) -> t.List[SeqGene]:
+    types = ['A', 'B', 'C', 'D', 'E', 'F']
+    n = np.random.randint(n_min, n_max)
+    seqs = ["".join(choices(types, k=np.random.randint(s_min, s_max))) for _ in range(n)]
+    ps = [tuple(np.random.randint(ps_min, ps_max, len(s))) for s in seqs]
+    scores = np.random.uniform(score_min, score_max, n).round(2)
+    return list(SeqGene(*x) for x in zip(seqs, ps, scores))
 
 
 @pytest.fixture()
@@ -38,9 +38,9 @@ def random_graph_genes():
     return generate_graph_genes()
 
 
-# @pytest.fixture()
-# def random_seq_genes():
-#     return generate_seq_genes()
+@pytest.fixture()
+def random_seq_genes():
+    return generate_seq_genes()
 
 
 @pytest.fixture()

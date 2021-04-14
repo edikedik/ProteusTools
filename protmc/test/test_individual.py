@@ -7,8 +7,8 @@ from statistics import median
 import numpy as np
 
 from protmc.genetic.base import EdgeGene
-from protmc.genetic.individual import GraphIndividual, AverageIndividual
-from .fixtures import random_graph_genes
+from protmc.genetic.individual import GraphIndividual, AverageIndividual, SeqIndividual
+from .fixtures import random_graph_genes, random_seq_genes
 
 
 def test_basic_init(random_graph_genes):
@@ -171,11 +171,11 @@ def test_add_genes():
     assert len(individual.genes()) == 3 and g2 in individual.genes()
 
 
-# def test_seq_individual(random_seq_genes):
-#     ind = SeqIndividual(random_seq_genes, False)
-#     assert len(ind) == len(random_seq_genes)
-#     assert ind.score == 0
-#     assert ind._n_pos == 0
-#     ind.upd()
-#     assert round(ind.score, 2) == round(sum(g.S for g in random_seq_genes), 2)
-#     assert ind._n_pos == len(reduce(op.or_, (set(g.Pos) for g in random_seq_genes)))
+def test_seq_individual(random_seq_genes):
+    ind = SeqIndividual(random_seq_genes, False)
+    assert len(ind) == len(random_seq_genes)
+    assert ind.score == 0
+    assert ind.n_pos == 0
+    ind.upd()
+    assert round(ind.score, 2) == round(sum(g.S for g in random_seq_genes), 2)
+    assert ind._n_pos == len(reduce(op.or_, (set(g.Pos) for g in random_seq_genes)))

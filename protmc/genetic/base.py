@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 import networkx as nx
 import pandas as pd
 
+Gene = t.TypeVar('Gene')
 EdgeGene = t.NamedTuple('EdgeGene', [('P1', int), ('P2', int), ('A1', str), ('A2', str), ('S', float), ('C', float)])
+SeqGene = t.NamedTuple('SeqGene', [('Seq', str), ('Pos', t.Tuple[int, ...]), ('S', float)])
 EarlyStopping = t.NamedTuple('EarlyStopping', [('Rounds', int), ('ScoreImprovement', float), ('Selector', str)])
 Bounds = t.NamedTuple('Bounds', [('lower', t.Optional[float]), ('upper', t.Optional[float])])
 Columns = t.NamedTuple(
@@ -16,7 +18,6 @@ ParsingResult = t.NamedTuple(
 Record = t.NamedTuple('Record', [('age', int), ('score', float)])
 CC = t.NamedTuple('CCSetup', [('Positions', t.Tuple[int, ...]), ('Genes', t.Tuple[EdgeGene, ...]),
                               ('MutSpace', t.Tuple[str, ...]), ('MutSpaceSize', int)])
-Ind = t.NamedTuple('IndSetup', [('CCs', t.List[CC]), ('WeakLinks', t.List[EdgeGene])])
 MultiGraphEdge = t.Tuple[int, int, str]
 
 
@@ -94,16 +95,27 @@ class ParsingParams:
     Default_coupling: t.Optional[float] = None
 
 
-class AbstractGraphIndividual(metaclass=ABCMeta):
-
-    @property
-    @abstractmethod
-    def graph(self) -> nx.MultiGraph:
-        pass
+class AbstractIndividual(metaclass=ABCMeta):
 
     @property
     @abstractmethod
     def score(self) -> float:
+        pass
+
+    @abstractmethod
+    def add_genes(self, genes: t.Collection[Gene]) -> 'AbstractIndividual':
+        pass
+
+    @abstractmethod
+    def remove_genes(self, genes: t.Collection[Gene]) -> 'AbstractIndividual':
+        pass
+
+
+class AbstractGraphIndividual(AbstractIndividual):
+
+    @property
+    @abstractmethod
+    def graph(self) -> nx.MultiGraph:
         pass
 
     @property
@@ -116,12 +128,12 @@ class AbstractGraphIndividual(metaclass=ABCMeta):
     def n_pos(self) -> int:
         pass
 
-    @abstractmethod
-    def add_genes(self, genes: t.Collection[EdgeGene]) -> 'AbstractGraphIndividual':
-        pass
 
+class AbstractSeqIndividual(AbstractIndividual):
+
+    @property
     @abstractmethod
-    def remove_genes(self, genes: t.Collection[EdgeGene]) -> 'AbstractGraphIndividual':
+    def n_pos(self) -> int:
         pass
 
 

@@ -28,6 +28,7 @@ class FlattenerSetup:
     predicate_mc: t.Callable[[MC], bool] = None
     reference: t.Optional[str] = None
     count_threshold: int = 1
+    step_threshold: int = 100
 
 
 @dataclass

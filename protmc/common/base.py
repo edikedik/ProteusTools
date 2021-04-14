@@ -8,6 +8,8 @@ Summary = t.NamedTuple('Summary', [
     ('num_unique', int), ('num_unique_merged', int), ('coverage', float),
     ('seq_prob_mean', float), ('seq_prob_std', float), ('seq_prob_rss', float)])
 ShortSummary = t.NamedTuple('ShortSummary', [('num_unique', int), ('num_unique_merged', int), ('coverage', float)])
+MCState = t.NamedTuple(
+    'MCState', [('Summary', t.Union[Summary, ShortSummary]), ('Bias', pd.DataFrame), ('Seqs', pd.DataFrame)])
 Population_element = t.NamedTuple('Population_element', [('seq', str), ('count', int)])
 AA_pair = t.NamedTuple('AA_pair', [('pos_i', str), ('pos_j', str), ('aa_i', str), ('aa_j', str)])
 PairBias = t.NamedTuple('PairBias', [('aa_pair', AA_pair), ('bias', float)])
@@ -162,8 +164,7 @@ class AbstractPoolExecutor(metaclass=ABCMeta):
     def id(self):
         return self._id
 
-    def apply(self, executor: t.Type[AbstractExecutor], pool: t.Collection[t.Type[AbstractWorker]]) \
-            -> t.Collection[AbstractWorker]:
+    def __call__(self, workers: t.Sequence[AbstractWorker]) -> t.Sequence[AbstractWorker]:
         raise NotImplementedError
 
 

@@ -8,7 +8,7 @@ import networkx as nx
 import pandas as pd
 from more_itertools import peekable
 
-from .base import EdgeGene, MultiGraphEdge, AbstractGraphIndividual
+from .base import EdgeGene, MultiGraphEdge, AbstractGraphIndividual, AbstractSeqIndividual, Gene, SeqGene
 from .utils import add_gene, genes2_graph, mut_space_size
 
 
@@ -173,6 +173,49 @@ class AverageIndividual(GraphIndividual):
                 lambda e: (e[0], e[1]))),
             4)
         return self._score
+
+
+class SeqIndividual(AbstractSeqIndividual):
+    def __init__(self, genes: t.Collection[SeqGene], upd_on_init: bool = True):
+        self._genes = set(genes)
+        self._score = 0
+        self._n_pos = 0
+        if upd_on_init:
+            self.upd()
+
+    def __len__(self):
+        return len(self.genes)
+
+    def copy(self):
+        return SeqIndividual(self._genes.copy(), upd_on_init=True)
+
+    @property
+    def genes(self) -> t.Set[SeqGene]:
+        return self._genes
+
+    @property
+    def n_pos(self) -> int:
+        return self._n_pos
+
+    @property
+    def score(self) -> float:
+        return self._score
+
+    def upd(self):
+        self._score = sum(g.S for g in self.genes)
+        self._n_pos = len(reduce(op.or_, (set(g.Pos) for g in self.genes)))
+
+    def add_genes(self, genes: t.Collection[SeqGene], update: bool = False) -> 'SeqIndividual':
+        genes_upd = self._genes | set(genes)
+        if update:
+            self._genes = genes_upd
+        return SeqIndividual(genes_upd)
+
+    def remove_genes(self, genes: t.Collection[SeqGene], update: bool = False) -> 'SeqIndividual':
+        genes_upd = self._genes - set(genes)
+        if update:
+            self._genes = genes_upd
+        return SeqIndividual(genes_upd)
 
 
 Individual = t.TypeVar('Individual', bound=GraphIndividual)
