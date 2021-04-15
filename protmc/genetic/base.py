@@ -44,7 +44,7 @@ class GeneticParams:
     Population_size: int
     Coupling_threshold: float
     Score_kwargs: t.Dict[str, t.Any] = field(default_factory=dict)
-    Gene_pool: t.List[EdgeGene] = field(default_factory=list)
+    Gene_pool: t.List[Gene] = field(default_factory=list)
     Individual_base_size: int = 50
     Brood_size: int = 1
     Number_of_mates: int = 2
@@ -56,7 +56,7 @@ class GeneticParams:
     Probabilities: t.Tuple[float, float, float] = (0.0, 0.5, 0.5)
     Tournaments_selection: int = 20
     Tournaments_policy: int = 20
-    Early_Stopping: EarlyStopping = EarlyStopping(50, 0.5, 'max')
+    Early_stopping: EarlyStopping = EarlyStopping(50, 0.5, 'max')
     Max_mut_space: bool = True
     Max_num_pos: bool = False
 
@@ -94,9 +94,13 @@ class ParsingParams:
     Exclude_types: t.List[t.Tuple[t.Union[str, int], str]] = field(default_factory=list)
     Exclude_pairs: t.List[t.Tuple[int, int]] = field(default_factory=list)
     Default_coupling: t.Optional[float] = None
+    Top_n_seqs: t.Optional[int] = None
 
 
 class AbstractIndividual(metaclass=ABCMeta):
+
+    def __len__(self):
+        pass
 
     @property
     @abstractmethod

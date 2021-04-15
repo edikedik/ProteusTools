@@ -1,7 +1,7 @@
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import groupby
+from itertools import groupby, product, combinations
 from statistics import mean
 
 import networkx as nx
@@ -184,12 +184,11 @@ class SeqIndividual(AbstractSeqIndividual):
             self.upd()
 
     def __len__(self):
-        return len(self.genes)
+        return len(self.genes())
 
     def copy(self):
         return SeqIndividual(self._genes.copy(), upd_on_init=True)
 
-    @property
     def genes(self) -> t.Set[SeqGene]:
         return self._genes
 
@@ -202,14 +201,15 @@ class SeqIndividual(AbstractSeqIndividual):
         return self._score
 
     def pos_overlap(self):
-        return len(reduce(op.and_, (set(g.Pos) for g in self.genes)))
+        pairs = combinations((set(g.Pos) for g in self.genes()), 2)
+        return any(x & y for x, y in pairs)
 
     def upd(self):
         if self.pos_overlap():
             self._score = 0
         else:
-            self._score = sum(g.S for g in self.genes)
-        self._n_pos = len(reduce(op.or_, (set(g.Pos) for g in self.genes)))
+            self._score = sum(g.S for g in self.genes())
+        self._n_pos = len(reduce(op.or_, (set(g.Pos) for g in self.genes())))
 
     def add_genes(self, genes: t.Iterable[SeqGene], update: bool = True) -> 'SeqIndividual':
         genes_upd = self._genes | set(genes)

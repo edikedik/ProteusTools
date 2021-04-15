@@ -51,7 +51,7 @@ def score(ind: t.Union[AbstractSeqIndividual, AbstractGraphIndividual],
     mutation space size as close to `desired_space` as possible,
     and, of course, a well-scoring composition of genes.
     """
-    ind_size = len(ind.graph.edges)
+    ind_size = len(ind)
     if ind_size < min_size or ind_size > max_size:
         return 0
 

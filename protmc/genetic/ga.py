@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from .base import GeneticParams, Record, EdgeGene
 from .crossover import recombine_genes_uniformly, take_unchanged
-from .individual import GraphIndividual
+from .individual import GraphIndividual, SeqIndividual
 from .mutator import Mutator
 from .score import score
 
@@ -165,6 +165,15 @@ def spawn_graph_individual(genetic_params: GeneticParams, individual_type, pool=
         for _ in range(genetic_params.Population_size)]
 
 
+def spawn_seq_populations(n: int, genetic_params: GeneticParams):
+    return [spawn_seq_individual(genetic_params) for _ in range(n)]
+
+
+def spawn_seq_individual(genetic_params: GeneticParams):
+    return [SeqIndividual(sample(genetic_params.Gene_pool, genetic_params.Individual_base_size))
+            for _ in range(genetic_params.Population_size)]
+
+
 @ray.remote
 def _evolve_remote(
         num_gen: int, evolver: GenericEvolver, individuals: t.List[GraphIndividual],
@@ -177,7 +186,7 @@ def _evolve_remote(
     selector = {
         'max': (lambda recs: max(r.score for r in recs)),
         'mean': (lambda recs: mean(r.score for r in recs))
-    }[genetic_params.Early_Stopping.Selector]
+    }[genetic_params.Early_stopping.Selector]
 
     for gen in range(1, num_gen + 1):
         individuals, records = evolver.evolve_generation(
@@ -186,9 +195,9 @@ def _evolve_remote(
             individuals, records, operators = evolver.call_callbacks(
                 callbacks, individuals, records, operators)
         current = selector(records)
-        if current - previous < genetic_params.Early_Stopping.ScoreImprovement:
+        if current - previous < genetic_params.Early_stopping.ScoreImprovement:
             counter += 1
-            if counter >= genetic_params.Early_Stopping.Rounds:
+            if counter >= genetic_params.Early_stopping.Rounds:
                 return individuals, records, callbacks, gen
         else:
             counter = 0

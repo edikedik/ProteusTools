@@ -1,10 +1,12 @@
 import typing as t
 from glob import glob
+from warnings import warn
 
 import pandas as pd
+from tqdm import tqdm
 
 from protmc.basic.stability import stability
-from protmc.common.base import AbstractAggregator, Id
+from protmc.common.base import AbstractAggregator, Id, NoReferenceError
 from protmc.operators.worker import MC
 
 
@@ -49,26 +51,35 @@ def aggregate_from_base(
         base_dir: str, ref_seq: str, ref_pos: t.Sequence[int],
         pos_parser: t.Callable[[str], t.List[str]] = lambda x: x.split('-'),
         temperature: float = 0.6, count_threshold: int = 100,
-        holo: str = 'holo', apo: str = 'apo', mc: str = 'MC'):
+        holo: str = 'holo', apo: str = 'apo', mc: str = 'MC',
+        bias_name: str = 'ADAPT.inp.dat', seqs_name: str = 'RESULTS.tsv'):
 
     ref_pos_str = list(map(str, ref_pos))
     ref_pos_mapping = {p: i for i, p in enumerate(ref_pos_str)}
 
     def affinity_df(pair_base):
-        pop_apo = pd.read_csv(f'{pair_base}/{apo}/{mc}/RESULTS.tsv', sep='\t')
-        pop_holo = pd.read_csv(f'{pair_base}/{holo}/{mc}/RESULTS.tsv', sep='\t')
-        bias_apo = f'{pair_base}/{apo}/{mc}/ADAPT.inp.dat'
-        bias_holo = f'{pair_base}/{holo}/{mc}/ADAPT.inp.dat'
+        pop_apo = pd.read_csv(f'{pair_base}/{apo}/{mc}/{seqs_name}', sep='\t')
+        pop_holo = pd.read_csv(f'{pair_base}/{holo}/{mc}/{seqs_name}', sep='\t')
+        bias_apo = f'{pair_base}/{apo}/{mc}/{bias_name}'
+        bias_holo = f'{pair_base}/{holo}/{mc}/{bias_name}'
         stability_apo = stability(pop_apo, bias_apo, ref_seq, temperature, count_threshold, ref_pos_str)
         stability_holo = stability(pop_holo, bias_holo, ref_seq, temperature, count_threshold, ref_pos_str)
         df = pd.merge(stability_apo, stability_holo, on='seq', how='outer', suffixes=['_apo', '_holo'])
         df['affinity'] = df['stability_holo'] - df['stability_apo']
         positions = pos_parser(pair_base)
-        df['seq_subset'] = df['seq'].apply(lambda s: ''.join(ref_pos_mapping[p] for p in positions))
+        df['seq_subset'] = df['seq'].apply(lambda s: ''.join(s[ref_pos_mapping[p]] for p in positions))
         df['pos'] = '-'.join(positions)
         return df
 
-    return pd.concat((affinity_df(p) for p in glob(f'{base_dir}/*')))
+    paths = tqdm(glob(f'{base_dir}/*'), desc='Aggregating workers')
+    dfs = []
+    for p in paths:
+        try:
+            dfs.append(affinity_df(p))
+        except (NoReferenceError, ValueError, KeyError) as e:
+            warn(f'Could not aggregate worker {p} due to {e}')
+
+    return pd.concat(dfs)
 
 
 if __name__ == '__main__':

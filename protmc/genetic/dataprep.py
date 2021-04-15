@@ -22,6 +22,35 @@ def _filter_bounds(df: pd.DataFrame, var_name: str, bound: t.Optional[float] = N
     return idx
 
 
+def filter_bounds(df: pd.DataFrame, params: ParsingParams):
+    # Filter by single-variable bounds
+    cols = params.Results_columns
+    df = df.copy()
+    lower = [(cols.affinity, params.Affinity_bounds.lower),
+             (cols.stability_apo, params.Stability_apo_bounds.lower),
+             (cols.stability_holo, params.Stability_holo_bounds.lower)]
+    upper = [(cols.affinity, params.Affinity_bounds.upper),
+             (cols.stability_apo, params.Stability_apo_bounds.upper),
+             (cols.stability_holo, params.Stability_holo_bounds.upper)]
+    idx = reduce(op.and_, chain(
+        starmap(lambda col, bound: _filter_bounds(df, col, bound, True), lower),
+        starmap(lambda col, bound: _filter_bounds(df, col, bound, False), upper)))
+    df = df[idx]
+    logging.info(f'Filtered to {idx.sum()} observations according to single-variable bounds')
+
+    # Filter by joint stability bounds
+    l, h = params.Stability_joint_bounds
+    if l is not None:
+        idx = (df[cols.stability_apo] > l) & (df[cols.stability_holo] > l)
+        df = df[idx]
+        logging.info(f'Filtered to {idx.sum()} records with stability_apo & stability_holo > {l}')
+    if h is not None:
+        idx = (df[cols.stability_apo] < h) & (df[cols.stability_holo] < h)
+        df = df[idx]
+        logging.info(f'Filtered to {idx.sum()} records with stability_apo & stability_holo < {h}')
+    return df
+
+
 def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Parses a DataFrame, typically an output of AffinitySearch, to be used in genetic algorithm.
@@ -130,36 +159,14 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
 
     # Only now we exclude positions; this solves the issue of using singletons
     # in the context of possibly failed affinity calculations. Indeed, if the
-    # calculation is failed, using pairs derived from singletons for such
+    # calculation has failed, using pairs derived from singletons for such
     # positions would be wrong.
     if params.Exclude_pairs:
         df = df[df[cols.pos].apply(
             lambda p: tuple(map(int, p.split('-'))) not in params.Exclude_pairs)]
         logging.info(f'Excluded pairs {params.Exclude_pairs}. Records: {len(df)}')
 
-    # Filter by single-variable bounds
-    lower = [(cols.affinity, params.Affinity_bounds.lower),
-             (cols.stability_apo, params.Stability_apo_bounds.lower),
-             (cols.stability_holo, params.Stability_holo_bounds.lower)]
-    upper = [(cols.affinity, params.Affinity_bounds.upper),
-             (cols.stability_apo, params.Stability_apo_bounds.upper),
-             (cols.stability_holo, params.Stability_holo_bounds.upper)]
-    idx = reduce(op.and_, chain(
-        starmap(lambda col, bound: _filter_bounds(df, col, bound, True), lower),
-        starmap(lambda col, bound: _filter_bounds(df, col, bound, False), upper)))
-    df = df[idx]
-    logging.info(f'Filtered to {idx.sum()} observations according to single-variable bounds')
-
-    # Filter by joint stability bounds
-    l, h = params.Stability_joint_bounds
-    if l is not None:
-        idx = (df[cols.stability_apo] > l) & (df[cols.stability_holo] > l)
-        df = df[idx]
-        logging.info(f'Filtered to {idx.sum()} records with stability_apo & stability_holo > {l}')
-    if h is not None:
-        idx = (df[cols.stability_apo] < h) & (df[cols.stability_holo] < h)
-        df = df[idx]
-        logging.info(f'Filtered to {idx.sum()} records with stability_apo & stability_holo < {h}')
+    df = filter_bounds(df, params)
 
     # Cap affinity at certain values
     l, h = params.Affinity_cap
@@ -176,8 +183,11 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     scores = np.array(df[cols.affinity])
     if params.Reverse_score:
         scores = -scores
-    df[cols.affinity] = np.round(scale(scores, params.Scale_range.lower, params.Scale_range.upper), 4)
-    logging.info(f'Converted and scaled affinity scores. Final records: {len(df)}')
+        logging.info(f'Reversed affinity scores sign')
+    l, h = params.Scale_range
+    if l is not None and h is not None:
+        df[cols.affinity] = np.round(scale(scores, l, h), 4)
+        logging.info(f'Scaled affinity scores between {l} and {h}')
     return df, singletons
 
 
