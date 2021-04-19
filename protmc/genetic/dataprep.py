@@ -2,7 +2,7 @@ import logging
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import product, filterfalse, starmap, chain
+from itertools import product, filterfalse, starmap, chain, combinations
 from warnings import warn
 
 import numpy as np
@@ -10,7 +10,7 @@ import pandas as pd
 
 from protmc.common.base import AminoAcidDict
 from protmc.common.utils import scale
-from .base import EdgeGene, ParsingParams, ParsingResult
+from .base import EdgeGene, ParsingParams, ParsingResult, SeqGene
 
 
 def _filter_bounds(df: pd.DataFrame, var_name: str, bound: t.Optional[float] = None, lower: bool = True):
@@ -51,6 +51,23 @@ def filter_bounds(df: pd.DataFrame, params: ParsingParams):
     return df
 
 
+def map_proto_states(df: pd.DataFrame, params: ParsingParams) -> pd.DataFrame:
+    df = df.copy()
+    proto_map = AminoAcidDict().proto_mapping
+    cols = params.Results_columns
+
+    def _map(seq: str):
+        return "".join([proto_map[c] if c in proto_map else c for c in seq])
+
+    df[cols.seq_subset] = df[cols.seq_subset].apply(_map)
+    df = df.groupby(
+        [cols.pos, cols.seq_subset], as_index=False
+    ).agg(
+        {cols.stability_apo: 'mean', cols.stability_holo: 'mean', cols.affinity: 'mean'}
+    )
+    return df
+
+
 def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Parses a DataFrame, typically an output of AffinitySearch, to be used in genetic algorithm.
@@ -72,11 +89,6 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     if params.Exclude_pairs is not None:
         pos_covered |= {f'{p1}-{p2}' for p1, p2 in params.Exclude_pairs}
 
-    # Map protonation states to single types
-    def map_proto_states(seq: str) -> str:
-        proto_map = AminoAcidDict().proto_mapping
-        return "".join([proto_map[c] if c in proto_map else c for c in seq])
-
     if params.Exclude_types:
         ps = {str(x[0]) for x in params.Exclude_types}
         ts = {x[1] for x in params.Exclude_types}
@@ -89,13 +101,8 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
             [p1_, p2_])
         df = df[~(idx1 | idx2)]
 
-    df[cols.seq_subset] = df[cols.seq_subset].apply(map_proto_states)
-    df = df.groupby(
-        [cols.pos, cols.seq_subset], as_index=False
-    ).agg(
-        {cols.stability_apo: 'mean', cols.stability_holo: 'mean', cols.affinity: 'mean'}
-    )
-    logging.info(f'Mapped protonated states. Records: {len(df)}')
+    df = map_proto_states(df, params)
+    logging.info(f'Mapped proto states. Records: {len(df)}')
 
     # Filter pairs
     def is_singleton(p: str):
@@ -203,10 +210,95 @@ def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> t.Tuple[EdgeGene, .
     )
 
 
+def _estimate(seq: t.Tuple[t.Tuple[str, str], ...], mapping, params, size):
+    if len(seq) == 1:
+        try:
+            return mapping[seq]
+        except KeyError:
+            warn(f'Seq {seq} could not be stimated')
+            return 0
+
+    combs = combinations(seq, size)
+    s = 0
+    for c in combs:
+        c = tuple(c)
+        try:
+            s += mapping[c]
+        except KeyError:
+            s += _estimate(c, mapping, params, size - 1)
+    return s
+
+
+def _aff_mapping(df, params):
+    cols = params.Results_columns
+    df = df[df[cols.seq_subset].apply(
+        lambda s: len(s) <= params.Seq_size_threshold)][
+        [cols.seq_subset, cols.pos, cols.affinity]]
+    return {tuple(zip(seq, pos.split('-'))): s for _, seq, pos, s in df.itertuples()}
+
+
+def estimate_seq_aff(df, params):
+    df = df.copy()
+    cols = params.Results_columns
+    mapping = _aff_mapping(df, params)
+    df['affinity_estimate'] = [
+        _estimate(tuple(zip(s, p.split('-'))), mapping, params, params.Seq_size_threshold)
+        for _, s, p in df[[cols.seq_subset, cols.pos]].itertuples()
+    ]
+    return df
+
+
+def prepare_singletons(df, params):
+    df = df.copy()
+    cols = params.Results_columns
+    idx = df[cols.pos].apply(lambda x: len(set(x.split('-'))) == 1)
+    df.loc[idx, cols.seq_subset] = df.loc[idx, cols.seq_subset].apply(lambda x: x[0])
+    df.loc[idx, cols.pos] = df.loc[idx, cols.pos].apply(lambda x: x.split('-')[0])
+    return df
+
+
+def prepare_seq_df(params):
+    df = params.Results
+    cols = params.Results_columns
+    assert isinstance(df, pd.DataFrame)
+    df = df.copy().dropna().drop_duplicates()
+    logging.info(f'Initial df size: {len(df)}')
+    df = map_proto_states(df, params)
+    logging.info(f'Mapped proto states. Records: {len(df)}')
+    df = prepare_singletons(df, params)
+    logging.info(f'Prepared singletons')
+    df = estimate_seq_aff(df, params)
+    logging.info(f'Estimated affinity from {params.Seq_size_threshold}-sized seqs')
+    idx = df[cols.seq_subset].apply(
+        lambda x: len(x) > params.Seq_size_threshold)
+    idx &= abs(df[cols.affinity] - df['affinity_estimate']) < params.Affinity_diff_threshold
+    df = df[~idx]
+    logging.info(f'Filtered out {idx.sum()} records due to estimation '
+                 f'being accurate to the point of {params.Affinity_diff_threshold}. '
+                 f'Records: {len(df)}')
+    df = filter_bounds(df, params)
+    logging.info(f'Filtered by affinity and stability bounds. Records: {len(df)}')
+    n = params.Top_n_seqs
+    if n is not None and n > 0:
+        df = df.sort_values('affinity', ascending=True).groupby('pos').head(n)
+    logging.info(f'Selected {n} best records per position set. Records: {len(df)}')
+    return df
+
+
+def prepare_seq_pool(df, params):
+    cols = params.Results_columns
+    return [SeqGene(seq, tuple(map(int, p.split('-'))), -s) for _, seq, p, s in df[
+        [cols.seq_subset, cols.pos, cols.affinity]].itertuples()]
+
+
 def prepare_data(params: ParsingParams) -> ParsingResult:
     # TODO: docs for the interface function
-    df, singletons = prepare_df(params)
-    return ParsingResult(df, singletons, prepare_pool(df, params))
+    if params.Seq_df:
+        df = prepare_seq_df(params)
+        return ParsingResult(df, None, prepare_seq_pool(df, params))
+    else:
+        df, singletons = prepare_df(params)
+        return ParsingResult(df, singletons, prepare_pool(df, params))
 
 
 if __name__ == '__main__':

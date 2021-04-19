@@ -9,7 +9,7 @@ import numpy as np
 from ray.util.multiprocessing import Pool
 from tqdm import tqdm
 
-from .base import EdgeGene
+from .base import EdgeGene, SeqGene
 
 
 def get_attr(graph: nx.Graph, attr: str):
@@ -83,10 +83,10 @@ def genes2_graph(genes: t.Collection[EdgeGene], coupling_threshold: float) -> nx
     return graph
 
 
-def dist(i1: int, g1: nx.Graph, i2: int, g2: nx.Graph) -> t.Tuple[int, int, float]:
+def graph_dist(i1: int, g1: nx.Graph, i2: int, g2: nx.Graph) -> t.Tuple[int, int, float]:
     """
     Compute distance between two graphs.
-    Dist(g1, g2) = sum of number of different types at each position.
+    Dist(g1, g2) = sum of the number of different types at each position.
     """
     space1, space2 = map(dict, map(mut_space, [g1, g2]))
     d = 0
@@ -101,15 +101,38 @@ def dist(i1: int, g1: nx.Graph, i2: int, g2: nx.Graph) -> t.Tuple[int, int, floa
     return i1, i2, d
 
 
-def dist_mat(graphs: t.Sequence[nx.Graph], n_jobs: int = 20):
-    """Compute distance matrix using `Dist(g1, g2) = sum of number of different types at each position`."""
-    size = len(graphs)
+def seq_dist(i1: int, s1: t.Collection[SeqGene],
+             i2: int, s2: t.Collection[SeqGene]) -> t.Tuple[int, int, float]:
+    """Compute distance between collection of `SeqGene`s.
+    Dist(s1, s2) = sum of the number of different types at each position.
+    """
+    m1, m2 = map(
+        lambda s: dict(chain.from_iterable(
+            ((pos, aa) for pos, aa in zip(g.Pos, g.Seq)) for g in s)),
+        [s1, s2])
+    d = 0.
+    for p in set(m1) | set(m2):
+        if p in m1 and p in m2 and m1[p] == m2[p]:
+            continue
+        d += 1
+    return i1, i2, d
+
+
+def dist_mat(objs: t.Union[t.Sequence[nx.Graph], t.Sequence[t.Collection[SeqGene]]], n_jobs: int = 10) -> np.ndarray:
+    """Compute distance matrix using `Dist(obj1, obj2)` <-
+    sum of the number of different types at each position.
+    """
+    if isinstance(objs[0], nx.Graph):
+        dist = graph_dist
+    else:
+        dist = seq_dist
+    size = len(objs)
     base = np.zeros(shape=(size, size))
     staged_data = []
     for i in range(size):
         for j in range(size):
             if i <= j:
-                staged_data.append((i, graphs[i], j, graphs[j]))
+                staged_data.append((i, objs[i], j, objs[j]))
     staged_data = tqdm(
         staged_data,
         desc='Distance matrix')

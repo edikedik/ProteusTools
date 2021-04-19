@@ -14,7 +14,7 @@ Columns = t.NamedTuple(
     'Columns', [('pos', str), ('seq_subset', str), ('affinity', str),
                 ('stability_apo', str), ('stability_holo', str)])
 ParsingResult = t.NamedTuple(
-    'ParsingResult', [('df', pd.DataFrame), ('singletons', pd.DataFrame), ('pool', t.Collection[EdgeGene])])
+    'ParsingResult', [('df', pd.DataFrame), ('singletons', t.Optional[pd.DataFrame]), ('pool', t.Collection[Gene])])
 Record = t.NamedTuple('Record', [('age', int), ('score', float)])
 CC = t.NamedTuple('CCSetup', [('Positions', t.Tuple[int, ...]), ('Genes', t.Tuple[EdgeGene, ...]),
                               ('MutSpace', t.Tuple[str, ...]), ('MutSpaceSize', int)])
@@ -95,6 +95,9 @@ class ParsingParams:
     Exclude_pairs: t.List[t.Tuple[int, int]] = field(default_factory=list)
     Default_coupling: t.Optional[float] = None
     Top_n_seqs: t.Optional[int] = None
+    Seq_size_threshold: int = 2
+    Seq_df: bool = False
+    Affinity_diff_threshold: float = 0.3
 
 
 class AbstractIndividual(metaclass=ABCMeta):

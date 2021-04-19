@@ -30,7 +30,7 @@ class Mutator:
         if self.copy:
             individual = individual.copy()
         if len(individual) <= self.deletion_size:
-            warn(f"Can't delete {self.deletion_size} genes from {len(individual)}-sized GraphIndividual")
+            warn(f"Can't delete {self.deletion_size} genes from {len(individual)}-sized Individual")
             return individual
         del_genes = sample(individual.genes(), self.deletion_size)
         return individual.remove_genes(del_genes)

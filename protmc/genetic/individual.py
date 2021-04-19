@@ -186,6 +186,15 @@ class SeqIndividual(AbstractSeqIndividual):
     def __len__(self):
         return len(self.genes())
 
+    def __contains__(self, gene: SeqGene):
+        return gene in self._genes
+
+    def __eq__(self, other: 'SeqIndividual'):
+        return self._genes == other._genes
+
+    def __hash__(self):
+        return sum(hash(g) for g in self._genes)
+
     def copy(self):
         return SeqIndividual(self._genes.copy(), upd_on_init=True)
 
