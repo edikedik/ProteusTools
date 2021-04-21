@@ -1,15 +1,20 @@
 import logging
 import typing as t
 from dataclasses import dataclass
+from glob import glob
 from itertools import chain, groupby, combinations, product, starmap
+from warnings import warn
 
+import pandas as pd
 import ray
 from more_itertools import chunked
+from tqdm import tqdm
 
 import protmc.common.utils as u
 import protmc.operators as ops
+from protmc.basic import stability
 from protmc.basic.config import ProtMCconfig, parse_config
-from protmc.common.base import Id
+from protmc.common.base import Id, NoReferenceError
 from protmc.operators import ADAPT, MC, AffinityAggregator, GenericExecutor
 from protmc.operators.flattener import Flattener, flatten_pair
 
@@ -216,6 +221,60 @@ class AffinitySearch:
 
     def aggregate(self, aggregator: AffinityAggregator, ids: t.Collection[Id]):
         raise NotImplementedError
+
+
+def aggregate_from_base(
+        base_dir: str, ref_seq: str, ref_pos: t.Sequence[int],
+        pos_parser: t.Callable[[str], t.List[str]] = lambda x: x.split('-'),
+        temperature: float = 0.6, count_threshold: int = 100,
+        holo: str = 'holo', apo: str = 'apo', mc: str = 'MC',
+        bias_name: str = 'ADAPT.inp.dat', seqs_name: str = 'RESULTS.tsv') -> pd.DataFrame:
+    """
+    Aggregate the `AffinitySearch` results.
+    It assumes the following directory structure:
+    `base_dir`/`pair dir`/`apo` or `holo`/`adapt` or `mc`.
+    It also assumes that `pos_parser` can obtain a list of positions from the `pair dir`.
+    :param base_dir: "Root" directory path.
+    :param ref_seq: Reference sequence.
+    :param ref_pos: Positions of amino acids in the reference sequence in the same order.
+    :param pos_parser: Callable accepting a name of the `pair dir` and returning a list of positions.
+    :param temperature: Simulation temperature.
+    :param count_threshold: Sequences above this threshold will be excluded during aggregation.
+    :param holo: A name of the `holo` dir.
+    :param apo: A name of the `apo` dir.
+    :param mc: A name of the `mc` dir.
+    :param bias_name: A name of the bias file. Assumed to reside in the `mc` dir.
+    :param seqs_name: A name of the "tsv" file with the sequence counts.
+    :return: A DataFrame with aggregated sequences, stability of each `apo` and `holo` systems,
+    and affinity -- a stability difference between `holo` and `apo` systems.
+    """
+
+    ref_pos_str = list(map(str, ref_pos))
+    ref_pos_mapping = {p: i for i, p in enumerate(ref_pos_str)}
+
+    def affinity_df(pair_base):
+        pop_apo = pd.read_csv(f'{pair_base}/{apo}/{mc}/{seqs_name}', sep='\t')
+        pop_holo = pd.read_csv(f'{pair_base}/{holo}/{mc}/{seqs_name}', sep='\t')
+        bias_apo = f'{pair_base}/{apo}/{mc}/{bias_name}'
+        bias_holo = f'{pair_base}/{holo}/{mc}/{bias_name}'
+        stability_apo = stability(pop_apo, bias_apo, ref_seq, temperature, count_threshold, ref_pos_str)
+        stability_holo = stability(pop_holo, bias_holo, ref_seq, temperature, count_threshold, ref_pos_str)
+        df = pd.merge(stability_apo, stability_holo, on='seq', how='outer', suffixes=['_apo', '_holo'])
+        df['affinity'] = df['stability_holo'] - df['stability_apo']
+        positions = pos_parser(pair_base)
+        df['seq_subset'] = df['seq'].apply(lambda s: ''.join(s[ref_pos_mapping[p]] for p in positions))
+        df['pos'] = '-'.join(positions)
+        return df
+
+    paths = tqdm(glob(f'{base_dir}/*'), desc='Aggregating workers')
+    dfs = []
+    for p in paths:
+        try:
+            dfs.append(affinity_df(p))
+        except (NoReferenceError, ValueError, KeyError) as e:
+            warn(f'Could not aggregate worker {p} due to {e}')
+
+    return pd.concat(dfs)
 
 
 if __name__ == '__main__':

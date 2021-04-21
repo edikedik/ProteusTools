@@ -15,12 +15,30 @@ class ExecutorError(Exception):
 
 
 class Flattener(AbstractPoolExecutor):
+    """
+    A higher-order class orchestrating the execution of a pair of workers: `MC` and `ADAPT`,
+    whose purpose is to flatten the sequence landscape.
+    """
     def __init__(self, id_: Id = None, reference: t.Optional[str] = None,
                  predicate_adapt: t.Optional[t.Callable[[ADAPT], bool]] = None,
                  predicate_mc: t.Optional[t.Callable[[MC], bool]] = None,
                  executor_adapt: t.Optional[AbstractExecutor] = None,
                  executor_mc: t.Optional[AbstractExecutor] = None,
                  count_threshold: int = 1, step_threshold: int = 300):
+        """
+        :param id_: Unique identifier. Defaults to `id(self)`.
+        :param reference: Reference sequence. In case it is provided,
+        its presence serves as additional flattening criterion.
+        :param predicate_adapt: A callable accepting `ADAPT` object and returning
+        `True` if the object is considered "flattened" (and `False` otherwise).
+        :param predicate_mc: A callable accepting `MC` object and returning
+        `True` if the object is considered "flattened" (and `False` otherwise).
+        :param executor_adapt: `Executor` operator with `ADAPT` execution strategy.
+        :param executor_mc:  `Executor` operator with `MC` execution strategy.
+        :param count_threshold: Threshold to consider the `reference` counted, if the latter is provided.
+        Note that separate eponymous argument exists at he level of workers.
+        :param step_threshold: A maximum number of steps to execute flattening.
+        """
         super().__init__(id_)
         self.predicate_mc = predicate_mc
         self.predicate_adapt = predicate_adapt
@@ -48,6 +66,10 @@ class Flattener(AbstractPoolExecutor):
             worker.seqs.loc[worker.seqs['total_count'] >= self.count_threshold, 'seq']))
 
     def transfer_bias(self, adapt: ADAPT, mc: MC) -> None:
+        """
+        Transfer the current `ADAPT` from its working directory to the `MC` working directory.
+        Modifies `MC`'s config so that it points to the transferred bias.
+        """
         # Check that there is an accumulated bias
         if adapt.bias is None or adapt.bias.bias is None:
             raise RuntimeError()
@@ -66,6 +88,12 @@ class Flattener(AbstractPoolExecutor):
         mc.modify_config(field_setters=[('MC_IO', 'Bias_Input_File', mc_bias_path)], dump=True)
 
     def __call__(self, pair: t.Tuple[ADAPT, MC]) -> t.Tuple[ADAPT, MC, int]:
+        """
+        Run the flattening loop.
+        :param pair: A pair of (1) `ADAPT` worker and (2) `MC` worker.
+        :return: A tuple of `ADAPT`, `MC` and the number of steps until the execution stopped.
+        :raises ExecutionError: if executor fails on any of the workers.
+        """
         adapt, mc = pair
         step = 0
         if self.adapt_passes(adapt) and self.mc_passes(mc):
@@ -96,6 +124,13 @@ class Flattener(AbstractPoolExecutor):
 def flatten_remotely(
         workers: t.Sequence[t.Tuple[ADAPT, MC]], flattener: Flattener,
         stop_on_fail: bool = False) -> t.List[t.Tuple[ADAPT, MC]]:
+    """
+    A helper function for parallel `Flattener`s execution via `ray` remote function.
+    :param workers: A pair of workers to flatten.
+    :param flattener: An initialized `Flattener` object.
+    :param stop_on_fail: If the execution fails, return the workers immediately.
+    :return:
+    """
     logging.info(f'Setting up Flattener {flattener.id} on {len(workers)} worker pairs')
     handles = [flatten_pair.remote(p, flattener) for p in workers]
     all_ids = {(adapt.id, mc.id) for adapt, mc in workers}

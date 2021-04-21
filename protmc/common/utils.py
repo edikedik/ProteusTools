@@ -190,17 +190,23 @@ def replace_constraints(constraints, replacement):
     return sorted(chain(base_clean, replacement))
 
 
-def extract_constraints(configs: t.Iterable) -> t.Optional[t.List[str]]:
+def extract_constraints(
+        configs: t.Iterable,
+        aggregator: t.Callable[[t.Iterable[str]], t.List[str]] = union_constraints) \
+        -> t.Optional[t.List[str]]:
+    """Extract and aggregate `Space_Constraints` from configs.
+    """
     constraints_ = filterfalse(
         lambda x: x is None,
         (c.get_field_value('Space_Constraints') for c in configs))
     constraints_ = [[c] if isinstance(c, str) else c for c in constraints_]
     if not constraints_:
         return None
-    return reduce(lambda x, y: intersect_constraints(x + y), constraints_)
+    return reduce(lambda x, y: aggregator(x + y), constraints_)
 
 
 def adapt_space(pos: t.Union[T, t.Iterable[T]]) -> t.Union[t.List[str], str]:
+    """Construct `Adapt_Space` from a single position or a list of positions."""
     if isinstance(pos, int):
         return f'{pos}-{pos}'
     return [f'{p1}-{p2}' for p1, p2 in set(combinations(map(str, pos), 2))]

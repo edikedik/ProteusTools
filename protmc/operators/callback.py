@@ -145,7 +145,7 @@ class Constrainer(AbstractCallback):
                           f'records for worker {worker.id}')
             df = df[df['seq'].apply(lambda x: x[p1] in ts1)]
             df = df[df['seq'].apply(lambda x: x[p2] in ts2)]
-            worker.change_seqs(df)
+            worker.set_seqs(df)
             logging.debug(f'Constrainer {self.id} -- wrote new `seqs` with {len(df)} '
                           f'records for worker {worker.id}')
             if worker.summary is not None:

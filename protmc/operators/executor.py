@@ -6,11 +6,26 @@ from protmc.operators.worker import ADAPT, Worker
 
 
 class GenericExecutor(AbstractExecutor):
+    """
+    Operator defining the `Worker`'s execution strategy.
+    """
     def __init__(self, id_: Id = None, store_bias: bool = True,
-                 callbacks: t.Optional[t.List[AbstractCallback]] = None,
+                 callbacks: t.Optional[t.Collection[AbstractCallback]] = None,
                  collect_seqs: bool = True, collect_kwargs: t.Optional[t.Dict[str, t.Any]] = None,
                  compose_summary: bool = True, summary_kwargs: t.Optional[t.Dict[str, t.Any]] = None,
                  cleanup: bool = True, cleanup_kwargs: t.Optional[t.Dict[str, t.Any]] = None):
+        """
+        :param id_: Unique Id. Defaults to `id(self)`.
+        :param store_bias: Whether to call `store_bias` method of a `Worker`.
+        :param callbacks: An optional collection of callbacks.
+        `Callback` is an operator accepting and returning a `Worker`.
+        :param collect_seqs: Whether to call `collect_seqs` method of a `Worker`.
+        :param collect_kwargs: Keyword arguments to `collect_seqs` method.
+        :param compose_summary: Whether to call `compose_summary` method of a `Worker`.
+        :param summary_kwargs: Keyword arguments to `compose_summary` method.
+        :param cleanup: Whether to call `cleanup` method of a `Worker`.
+        :param cleanup_kwargs: Keyword arguments to `cleanup` method.
+        """
         super().__init__(id_)
         self.store_bias = store_bias
         self.callbacks = callbacks
@@ -22,6 +37,10 @@ class GenericExecutor(AbstractExecutor):
         self.cleanup_kwargs = {} if cleanup_kwargs is None else cleanup_kwargs
 
     def __call__(self, worker: Worker) -> Worker:
+        """
+        Calls `setup_io` method and `run`s a `Worker`.
+        The follow-up execution is controlled via arguments provided during the initialization.
+        """
         worker.setup_io()
         logging.info(f'GenericExecutor {self.id} -- starting executing worker {worker.id}')
         worker.run()

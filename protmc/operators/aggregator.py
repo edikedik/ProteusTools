@@ -36,7 +36,7 @@ class AffinityAggregator(AbstractAggregator):
         st1, st2 = map(self.stability, workers)
         df = pd.merge(st1, st2, on='seq', suffixes=suffixes, how='outer')
         if self.dump:
-            # TODO: this way of getting "MC root" dir is quite dumb
+            # TODO: this way of getting "MC root" dir is unstable
             w1_base, w2_base = map(lambda w: '/'.join(
                 w.params.working_dir.split('/')[:-1]), workers)
             if w1_base == w2_base:
@@ -45,41 +45,6 @@ class AffinityAggregator(AbstractAggregator):
                 base = './'
             df.to_csv(f'{base}/{self.dump_name}', sep='\t', index=False)
         return df
-
-
-def aggregate_from_base(
-        base_dir: str, ref_seq: str, ref_pos: t.Sequence[int],
-        pos_parser: t.Callable[[str], t.List[str]] = lambda x: x.split('-'),
-        temperature: float = 0.6, count_threshold: int = 100,
-        holo: str = 'holo', apo: str = 'apo', mc: str = 'MC',
-        bias_name: str = 'ADAPT.inp.dat', seqs_name: str = 'RESULTS.tsv'):
-
-    ref_pos_str = list(map(str, ref_pos))
-    ref_pos_mapping = {p: i for i, p in enumerate(ref_pos_str)}
-
-    def affinity_df(pair_base):
-        pop_apo = pd.read_csv(f'{pair_base}/{apo}/{mc}/{seqs_name}', sep='\t')
-        pop_holo = pd.read_csv(f'{pair_base}/{holo}/{mc}/{seqs_name}', sep='\t')
-        bias_apo = f'{pair_base}/{apo}/{mc}/{bias_name}'
-        bias_holo = f'{pair_base}/{holo}/{mc}/{bias_name}'
-        stability_apo = stability(pop_apo, bias_apo, ref_seq, temperature, count_threshold, ref_pos_str)
-        stability_holo = stability(pop_holo, bias_holo, ref_seq, temperature, count_threshold, ref_pos_str)
-        df = pd.merge(stability_apo, stability_holo, on='seq', how='outer', suffixes=['_apo', '_holo'])
-        df['affinity'] = df['stability_holo'] - df['stability_apo']
-        positions = pos_parser(pair_base)
-        df['seq_subset'] = df['seq'].apply(lambda s: ''.join(s[ref_pos_mapping[p]] for p in positions))
-        df['pos'] = '-'.join(positions)
-        return df
-
-    paths = tqdm(glob(f'{base_dir}/*'), desc='Aggregating workers')
-    dfs = []
-    for p in paths:
-        try:
-            dfs.append(affinity_df(p))
-        except (NoReferenceError, ValueError, KeyError) as e:
-            warn(f'Could not aggregate worker {p} due to {e}')
-
-    return pd.concat(dfs)
 
 
 if __name__ == '__main__':

@@ -9,6 +9,10 @@ from protmc.common.base import PairBias, AA_pair, Population_element
 
 
 def parse_ref_energies(path: str) -> t.Dict[str, float]:
+    """
+    :param path: A path to a file with average reference energies.
+    :return: A dictionary of aa->energy
+    """
     with open(path) as f:
         lines = (line.rstrip().split() for line in f if line != '\n')
         return {line[0]: float(line[1]) for line in lines}

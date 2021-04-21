@@ -1,14 +1,14 @@
 import operator as op
 import typing as t
 from functools import reduce
-from itertools import groupby, product, combinations
+from itertools import groupby, combinations
 from statistics import mean
 
 import networkx as nx
 import pandas as pd
 from more_itertools import peekable
 
-from .base import EdgeGene, MultiGraphEdge, AbstractGraphIndividual, AbstractSeqIndividual, Gene, SeqGene
+from .base import EdgeGene, MultiGraphEdge, AbstractGraphIndividual, AbstractSeqIndividual, SeqGene
 from .utils import add_gene, genes2_graph, mut_space_size
 
 
@@ -16,7 +16,7 @@ from .utils import add_gene, genes2_graph, mut_space_size
 
 
 class GraphIndividual(AbstractGraphIndividual):
-    # multiple strong links, single weak link
+
     def __init__(self, genes: t.Optional[t.Collection[EdgeGene]], coupling_threshold: float = 0,
                  max_mut_space: bool = True, max_num_positions: bool = False,
                  graph: t.Optional[nx.Graph] = None, upd_immediately: bool = True):
@@ -54,6 +54,7 @@ class GraphIndividual(AbstractGraphIndividual):
         return self._n_pos
 
     def _set_n_pos(self, value: int):
+        """Exists for lighter copying"""
         self._n_pos = value
 
     @property
@@ -277,7 +278,8 @@ def seq_population_from_df(
         if col not in df.columns:
             raise ValueError(f'Expected column {col} in the df')
 
-    gene_groups = df.groupby('Ind').apply(lambda group: [SeqGene(*g[1:]) for g in group.itertuples()])
+    gene_groups = df.groupby('Ind').apply(
+        lambda group: [SeqGene(g.Seq, g.Pos, g.S) for g in group.itertuples()])
     return [SeqIndividual(genes, **kwargs) for genes in gene_groups]
 
 
