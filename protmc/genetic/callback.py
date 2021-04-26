@@ -11,7 +11,13 @@ from .individual import Individual
 
 
 class Accumulator(Callback):
+    """
+    Base class for accumulator-type callbacks
+    """
     def __init__(self, freq: int):
+        """
+        :param freq: Frequency of saving/dumping the accumulated data.
+        """
         self.freq = freq
         self.generation = 0
         self.acc = []
@@ -21,6 +27,9 @@ class Accumulator(Callback):
 
 
 class ProgressSaver(Accumulator):
+    """
+    Saves minimalistic summary of the current population state -- (generation, mean scores, max scores).
+    """
 
     def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
             -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
@@ -35,7 +44,10 @@ class ProgressSaver(Accumulator):
 
 
 class PopulationGeneCounter(Accumulator):
-    """Collects the tuples of the form: (generation, num_genes, num_new_genes, num_old_genes)"""
+    """
+    Collects the tuples of the form: (generation, num_genes, num_new_genes, num_old_genes).
+    Allows tracking gene dynamics during the optimization.
+    """
 
     def __init__(self, freq: int):
         super().__init__(freq)
@@ -55,6 +67,10 @@ class PopulationGeneCounter(Accumulator):
 
 
 class UniqueGeneCounter(Accumulator):
+    """
+    Computationally-heavy callback, allowing to compare the mean unique genes of an Individual
+    against the genes of the whole population and each individual.
+    """
 
     def __call__(self, individuals: t.List[Individual], records: t.List[Record], operators: Operators) \
             -> t.Tuple[t.List[Individual], t.List[Record], Operators]:
@@ -86,6 +102,9 @@ class UniqueGeneCounter(Accumulator):
 
 
 class BestKeeper(Callback):
+    """
+    Callback storing the best-scoring Individual of a population.
+    """
     def __init__(self, agg_func=max):
         self.key = agg_func
         self.generation: int = 0

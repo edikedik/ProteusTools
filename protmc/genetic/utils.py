@@ -13,16 +13,23 @@ from .base import EdgeGene, SeqGene
 
 
 def get_attr(graph: nx.Graph, attr: str):
+    """Get values of `attr` within each of the graph's edges."""
     return [data[attr] for _, _, data in graph.edges.data()]
 
 
 def mut_space(graph: nx.Graph) -> t.Iterator[t.Tuple[int, t.List[str]]]:
+    """Convert graph into mutation space in the format ("POS AA1 AA2", ...)."""
     genes = get_attr(graph, 'gene')
     xs = sorted(chain.from_iterable(((g.P1, g.A1), (g.P2, g.A2)) for g in genes))
     return ((g, sorted(set(x[1] for x in gg))) for g, gg in groupby(xs, key=op.itemgetter(0)))
 
 
 def mut_space_size(graph: nx.MultiGraph, estimate=True) -> int:
+    """
+    Calculate mutation space size from graph's edges.
+    :param graph: A networkx graph where each edge has a `gene` attribute pointing to `EdgeGene` instance.
+    :param estimate: Log-estimate instead of direct mutation space computation may prevent numeric overflow.
+    """
     space = mut_space(graph)
     sizes = (len(gg) for g, gg in space)
     if estimate:

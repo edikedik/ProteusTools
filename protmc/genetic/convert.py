@@ -20,6 +20,15 @@ Worker = t.Union[ADAPT, MC]
 
 
 def prepare_cc(cc: nx.MultiGraph, base_constraints: t.List[str]) -> CC:
+    """
+    Given a fully connected `MultiGraph`, extracts information necessary to setup a pair of workers.
+    :param cc: Connected component.
+    :param base_constraints: Mutation space constraints imposed by the reference sequence.
+    :return: A `CC` named tuple with (1) list of positions, (2) genes,
+    (3) mutation space, and (4) mutation space size.
+    """
+    if not nx.is_connected(cc):
+        raise ValueError('Provided graph is not connected')
     mapping = AminoAcidDict().aa_dict
     genes = tuple(get_attr(cc, 'gene'))
     pos_types = sorted(chain(((g.P1, g.A1) for g in genes), ((g.P2, g.A2) for g in genes)))
@@ -33,6 +42,14 @@ def prepare_cc(cc: nx.MultiGraph, base_constraints: t.List[str]) -> CC:
 
 def cc_to_worker_pair(
         cc: CC, setup: AffinitySetup, param_pair: t.Tuple[Param_set, Param_set]) -> t.Tuple[Worker, Worker]:
+    """
+    Convert a prepared CC to a pair of workers.
+    :param cc: `CC` namedtuple
+    :param setup: `AffinitySearch` setup.
+    :param param_pair: All the unique parameters for a worker (i.e.,
+    list of positions, system, config, and so on).
+    :return: A pair of workers (`ADAPT`, `MC`).
+    """
     space_setter = ('MC_PARAMS', 'Space_Constraints', list(cc.MutSpace))
     unique_suffix = hash(tuple(cc.MutSpace))
     comb_dir = f'{"-".join(map(str, cc.Positions))}_{cc.MutSpaceSize}_{unique_suffix}'
@@ -49,6 +66,17 @@ def cc_to_worker_pair(
 def setup_population(
         population: t.Iterable[GraphIndividual], setup: AffinitySetup,
         mut_space_size_bounds: t.Tuple[t.Optional[float], t.Optional[float]] = (None, None)):
+    """
+    Prepare a collection of `GraphIndividual`s for the `protMC` sampling.
+    Separates individuals into connected components.
+    Associates each connected component with a pair of (`ADAPT`, `MC`) workers.
+    :param population: An iterable with `GraphIndividual`s.
+    :param setup: `AffinitySearch` setup: `combinations` attribute will be overwritten.
+    :param mut_space_size_bounds: CCs with mutation space size within these bounds will be retained.
+    :return: A tuple of: (1) mapping CC-> `GraphIndividual`, (2) mapping CC->pair of workers,
+    and (3) mapping (`ADAPT ID`, `MC ID) -> (`ADAPT` worker, `MC` worker).
+    The latter is ready to be used in `AffinitySearch`.
+    """
     if setup.combinations is not None:
         warn('Existing `combinations` attribute will be overwritten')
 

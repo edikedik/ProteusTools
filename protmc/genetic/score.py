@@ -7,6 +7,7 @@ from protmc.genetic.base import AbstractGraphIndividual, AbstractSeqIndividual
 
 def gaussian(x: t.Union[np.ndarray, float], mu: float = 0.0, sigma: float = 1.0) -> float:
     """
+    This is a spherical gaussian with a single mean (in case `x` is multidimensional).
     :return: Value of the gaussian with mean `mu` and std `sigma` at the point `x`.
     """
     return 1 / (2 * np.pi) ** (1 / 2) / sigma ** 2 * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
@@ -22,6 +23,10 @@ def gaussian_penalty(x: float, x_peak: float, sigma: float):
 
 
 def sigma_helper(desired_penalty: float, deviation: float):
+    """
+    Calculate the standard deviation associated with a `desired_penalty` value of `gaussian_penalty`
+    when deviation from mean reaches `deviation`.
+    """
     return (-deviation ** 2 / (2 * np.log(desired_penalty))) ** 1 / 2
 
 
@@ -32,24 +37,25 @@ def score(ind: t.Union[AbstractSeqIndividual, AbstractGraphIndividual],
           expose: bool = False, penalize_lower: bool = False) -> float:
     """
     Compute the score (fitness) of the individual.
-    The score's base value is the sum of gene scores weighted by the gaussian penalty for deviation from
-    either the desired mutation space size or the number of positions.
-    :param ind: An array of indices pointing to genes of the GenePool.
+    The score's base value is taken from the `score` property of an individual and
+    weighted by the gaussian penalty for deviation from either the desired
+    mutation space size or the number of positions.
+
+    In case no penalties are incurred, the function is essentially a `score` getter.
+    :param ind: And individual having the `score` property/attribute.
     :param min_size: A min size of an individual; lower sizes imply 0 score.
     :param max_size: A max size of an individual; higher sizes imply 0 score.
     :param pen_mut: Whether to penalize for deviation of mutation space from `desired_space`.
-    Note that switching this value off will likely cause oversized individuals.
+    If `True`, `ind` must have `mut_space_size` property/attribute.
     :param sigma_mut: Standard deviation (see `gaussian_penalty` docs).
     :param desired_space: A desired size of a mutation space size (estimate).
     :param pen_pos: Whether to penalize for the deviations from the `desired_pos`.
+     If `True`, `ind` must have `n_pos` property/attribute.
     :param sigma_pos: Standard deviation (see `gaussian_penalty` docs).
-    :param desired_pos: Desired number of unique positions within `indiv`
+    :param desired_pos: Desired number of unique positions within `ind`
     :param expose: If true print (base_score, duplication_penalty, mut_space_penalty, num_pos_penalty).
     :param penalize_lower: If true, penalize deviations symmetrically around the desired number.
-    :return: A score capturing how well individual meets our expectations.
-    Specifically, with the default weights, the best individual is has no duplicate genes, has
-    mutation space size as close to `desired_space` as possible,
-    and, of course, a well-scoring composition of genes.
+    :return: A weighted `score` of an individual.
     """
     ind_size = len(ind)
     if ind_size < min_size or ind_size > max_size:

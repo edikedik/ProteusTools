@@ -14,15 +14,37 @@ from tqdm import tqdm
 
 from .base import GeneticParams, Record, EdgeGene
 from .crossover import recombine_genes_uniformly, take_unchanged
-from .individual import GraphIndividual, SeqIndividual
+from .individual import GraphIndividual, SeqIndividual, Individual, _GraphIndividual
 from .mutator import Mutator
 from .score import score
 
 
 class GA:
+    """
+    Abstractly defined genetic algorithm. The core workflow is based on the `genetic` package.
+    Based on the provided params, sets up the following operators: `Estimator` (estimating fitness),
+    `Recorder` (managing individuals' records), `Selector` (selecting individuals for mating),
+    `Crossover` (combining individuals' genes), `Mutator` (mutating newborn individuals;
+    the whole operator is redefined for this version of the GA),
+    `Policy` (selecting individuals for the next generation), and `Evolver` (defining the
+    GA's workflow and checking operators' validity). Use `ops` attribute to access initialized operators.
+
+    A few things are hard-coded: (1) type of the selection strategy for `Selector` and `Policy` operators
+    is `ktournament`, (2) the fitness is assumed to be direct (i.e., better fitness value is better),
+    (3) `Record` used to keep individuals' records is a minimalistic namedtuple object with two fields:
+    age and score, (4) score is a `score` function defined in eponymous module (the actual score (fitness)
+    computation is assigned to individuals).
+    """
+
     def __init__(self, genetic_params: GeneticParams,
-                 populations: t.Optional[t.List[t.List[GraphIndividual]]] = None,
+                 populations: t.Optional[t.List[t.List[Individual]]] = None,
                  records: t.Optional[t.List[t.List[Record]]] = None):
+        """
+        :param genetic_params: A dataclass holding parameters of the GA.
+        :param populations: An optional list of populations, where each population is a list of Individuals.
+        Can be provided afterwards.
+        :param records: For each population, a list of individuals' records.
+        """
         crossovers = {'recombine_genes_uniformly': recombine_genes_uniformly, 'take_unchanged': take_unchanged}
         self.genetic_params = genetic_params
 
@@ -61,7 +83,8 @@ class GA:
         self.populations = populations
         self.records = records
 
-    def flatten(self):
+    def flatten(self) -> t.Tuple[t.List[Individual], t.List[Record]]:
+        """Flatten population into and records into lists."""
         if self.populations is None:
             raise ValueError('No populations')
         return (list(chain.from_iterable(self.populations)),
@@ -71,7 +94,7 @@ class GA:
         """
         Selects `n` best individuals per population based on the score function value.
         :param n: Number of individuals to take per population.
-        :param overwrite: Overwrite current population with the selection.
+        :param overwrite: Overwrite current populations with the selection.
         :return: A top-n selection.
         """
 
@@ -100,8 +123,11 @@ class GA:
         """
         Evolve populations currently held in `populations` attribute.
         Requires `ray` initialized externally to run.
+        Each population is evolved in a separate process.
+        Single process can be used via `evolve_local` method.
         :param num_gen: Number of generations to evolve each population.
         :param callbacks: Optional callbacks. Internal state will be preserved.
+        Applied separately to each evolving population following `Policy` operator.
         :param overwrite: Overwrite `populations` and `records` attributes with the results of the run.
         :return: A tuple of
         (1) a list of evolved populations
@@ -151,13 +177,18 @@ class GA:
 
 def spawn_graph_populations(
         n: int, genetic_params: GeneticParams, pool: t.Optional[t.Collection[EdgeGene]] = None,
-        individual_type=GraphIndividual) -> t.List[t.List[GraphIndividual]]:
-
+        individual_type: _GraphIndividual = GraphIndividual) -> t.List[t.List[_GraphIndividual]]:
+    """
+    Spawn `n` populations of `GraphIndividual`s with genes randomly sampled from `pool` without replacement.
+    If `genetic_params.GenePool` attribute is empty, the provided `pool` will be used.
+    """
     return [spawn_graph_individual(genetic_params, individual_type, pool) for _ in tqdm(
         range(n), total=n, desc='Spawning populations')]
 
 
 def spawn_graph_individual(genetic_params: GeneticParams, individual_type, pool=None):
+    """Spawn a single individual by randomly sampling genes from either
+    `genetic_params.Gene_pool` or the provided `pool`."""
     return [
         individual_type(
             sample(pool or genetic_params.Gene_pool, genetic_params.Individual_base_size),
@@ -166,6 +197,8 @@ def spawn_graph_individual(genetic_params: GeneticParams, individual_type, pool=
 
 
 def spawn_seq_populations(n: int, genetic_params: GeneticParams):
+    """Spawn `n` populations of `SeqIndividual`s by randomly sampling genes
+    from the `genetic_params.Gene_pool`."""
     return [spawn_seq_individual(genetic_params) for _ in range(n)]
 
 
@@ -180,6 +213,7 @@ def _evolve_remote(
         records: t.List[t.Optional[Record]], operators: Operators, genetic_params: GeneticParams,
         callbacks: t.Optional[t.List[Callback]]) \
         -> t.Tuple[t.List[GraphIndividual], t.List[Record], t.Optional[t.List[Callback]], int]:
+    """A helper function to evolve a population of `individuals` in parallel."""
     gen = 0
     counter = 0
     previous = 0
@@ -188,12 +222,16 @@ def _evolve_remote(
         'mean': (lambda recs: mean(r.score for r in recs))
     }[genetic_params.Early_stopping.Selector]
 
+    # For each generation
     for gen in range(1, num_gen + 1):
+        # Evolve generation
         individuals, records = evolver.evolve_generation(
             operators, genetic_params.Population_size, individuals, records)
+        # Apply callbacks, if any
         if callbacks:
             individuals, records, operators = evolver.call_callbacks(
                 callbacks, individuals, records, operators)
+        # Either terminate based on early stopping criteria or increment and continue
         current = selector(records)
         if current - previous < genetic_params.Early_stopping.ScoreImprovement:
             counter += 1

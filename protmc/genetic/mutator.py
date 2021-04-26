@@ -10,8 +10,22 @@ from .individual import Individual, GraphIndividual
 
 
 class Mutator:
+    """
+    An operator applying three possible actions on an `Individual`: `deletion`, `acquisition`, and `mutation`.
+    It is defined abstractly -- individuals themselves define the gene deletion and addition -- `Mutator` only
+    uses `add_genes` and `delete_genes` methods.
+    """
     def __init__(self, pool: t.Sequence[Gene], mutation_size: int, deletion_size: int, acquisition_size: int,
                  ps: t.Tuple[float, float, float], copy_individuals: bool = False):
+        """
+        :param pool: A pool of genes to sample from.
+        :param mutation_size: A number of genes to replace during `mutation`.
+        :param deletion_size: A number of genes to delete during `deletion`.
+        :param acquisition_size: A number of new genes to add during `acquisition`.
+        :param ps: A tuple, specifying the probabilities to choose (`mutation`, `deletion`, `acquisition`).
+        :param copy_individuals: Whether to call a `copy` method before applying an action,
+        thus preserving potentially mutable individual's internal state.
+        """
         self.pool = pool
         self.mutation_size = mutation_size
         self.deletion_size = deletion_size
@@ -20,6 +34,7 @@ class Mutator:
         self.copy = copy_individuals
 
     def mutation(self, individual: Individual) -> Individual:
+        """Replace `mutation_size` genes."""
         if self.copy:
             individual = individual.copy()
         del_genes = sample(individual.genes(), self.mutation_size)
@@ -27,6 +42,7 @@ class Mutator:
         return individual.remove_genes(del_genes).add_genes(new_genes)
 
     def deletion(self, individual: Individual) -> Individual:
+        """Delete `deletion_size` genes."""
         if self.copy:
             individual = individual.copy()
         if len(individual) <= self.deletion_size:
@@ -36,6 +52,7 @@ class Mutator:
         return individual.remove_genes(del_genes)
 
     def acquisition(self, individual: Individual) -> Individual:
+        """Sample `acquisition_size` genes from the `pool` and add them to individual."""
         if self.copy:
             individual = individual.copy()
         new_genes = sample(self.pool, self.acquisition_size)

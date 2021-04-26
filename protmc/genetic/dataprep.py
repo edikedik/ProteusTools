@@ -22,8 +22,10 @@ def _filter_bounds(df: pd.DataFrame, var_name: str, bound: t.Optional[float] = N
     return idx
 
 
-def filter_bounds(df: pd.DataFrame, params: ParsingParams):
-    # Filter by single-variable bounds
+def filter_bounds(df: pd.DataFrame, params: ParsingParams) -> pd.DataFrame:
+    """
+    Filter the "affinity" DataFrame based on stability and affinity bounds provided in `params`.
+    """
     cols = params.Results_columns
     df = df.copy()
     lower = [(cols.affinity, params.Affinity_bounds.lower),
@@ -52,6 +54,9 @@ def filter_bounds(df: pd.DataFrame, params: ParsingParams):
 
 
 def map_proto_states(df: pd.DataFrame, params: ParsingParams) -> pd.DataFrame:
+    """
+    Replace sequences in `df` by mapping protonated amino acids to their unprotonated versions.
+    """
     df = df.copy()
     proto_map = AminoAcidDict().proto_mapping
     cols = params.Results_columns
@@ -70,8 +75,9 @@ def map_proto_states(df: pd.DataFrame, params: ParsingParams) -> pd.DataFrame:
 
 def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Parses a DataFrame, typically an output of AffinitySearch, to be used in genetic algorithm.
-
+    Parses a DataFrame, typically an output of AffinitySearch, to be used in the GA.
+    The workflow (therefore, the end result) is depends entirely on the provided params.
+    See the `ParsingParams` documentation for more details.
     :param params: `ParsingParams` dataclass instance.
     :return: Parsed df ready to be sliced into a `GenePool`. The second element is the DataFrame with singletons.
     """
@@ -198,9 +204,9 @@ def prepare_df(params: ParsingParams) -> t.Tuple[pd.DataFrame, pd.DataFrame]:
     return df, singletons
 
 
-def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> t.Tuple[EdgeGene, ...]:
+def prepare_graph_pool(df: pd.DataFrame, params: ParsingParams) -> t.Tuple[EdgeGene, ...]:
     """
-    Prepare the gene pool
+    Prepare the gene pool -- a tuple of `EdgeGene`s.
     """
     cols = params.Results_columns
     return tuple(
@@ -210,12 +216,22 @@ def prepare_pool(df: pd.DataFrame, params: ParsingParams) -> t.Tuple[EdgeGene, .
     )
 
 
-def _estimate(seq: t.Tuple[t.Tuple[str, str], ...], mapping, params, size):
+def _estimate(seq: t.Tuple[t.Tuple[str, str], ...],
+              mapping: t.Mapping[t.Tuple[t.Tuple[str, str], ...], float],
+              params: ParsingParams,
+              size: int) -> float:
+    """
+    :param seq: A sequence in the form of (('AA', 'Pos'), ...)
+    :param mapping: Mapping of the sequences to energies.
+    :param params: A dataclass holding parsing parameters.
+    :param size: Max size of larger sequences to start the recursion.
+    :return: Sum (!) of sub-sequences' energies.
+    """
     if len(seq) == 1:
         try:
             return mapping[seq]
         except KeyError:
-            warn(f'Seq {seq} could not be stimated')
+            warn(f'Seq {seq} could not be estimated')
             return 0
 
     combs = combinations(seq, size)
@@ -229,7 +245,11 @@ def _estimate(seq: t.Tuple[t.Tuple[str, str], ...], mapping, params, size):
     return s
 
 
-def _aff_mapping(df, params):
+def _aff_mapping(df: pd.DataFrame, params: ParsingParams) -> t.Dict[t.Tuple[t.Tuple[str, str], ...], float]:
+    """
+    Create the mapping from sequences with lengths <= `params.Seq_size_threshold`
+    in the form of (('AA', 'Pos'), ...)to their affinities.
+    """
     cols = params.Results_columns
     df = df[df[cols.seq_subset].apply(
         lambda s: len(s) <= params.Seq_size_threshold)][
@@ -238,6 +258,14 @@ def _aff_mapping(df, params):
 
 
 def estimate_seq_aff(df, params):
+    """
+    Recursively estimate larger sequence's energy from energies of smaller sequences (up to singletons).
+    Warning! The current estimation strategy has been verified only on singletons.
+    :param df: A `DataFrame` complying the same standards as required by `params`
+    (i.e., having columns specified) in `Results_columns` attribute.
+    :param params: A dataclass holding parsing parameters.
+    :return: A `DataFrame` with a new column "affinity_estimate".
+    """
     df = df.copy()
     cols = params.Results_columns
     mapping = _aff_mapping(df, params)
@@ -249,6 +277,12 @@ def estimate_seq_aff(df, params):
 
 
 def prepare_singletons(df, params):
+    """
+    Change "seq" and "pos" columns of singletons from the form "AA", "P-P" to the form "A", "P".
+    :param df: A `DataFrame` with columns specified in `params.Results_columns`.
+    :param params: A dataclass holding parsing parameters.
+    :return: The `DataFrame`, with changed "seq" and "pos" columns for singletons (if any).
+    """
     df = df.copy()
     cols = params.Results_columns
     idx = df[cols.pos].apply(lambda x: len(set(x.split('-'))) == 1)
@@ -258,6 +292,12 @@ def prepare_singletons(df, params):
 
 
 def prepare_seq_df(params):
+    """
+    Prepares a "seq" `DataFrame` with rows ready to be wrapped into `SeqGene`s.
+    The workflow (therefore, the end result) is depends entirely on the provided params.
+    See the `ParsingParams` documentation for more details.
+    :param params: A dataclass holding parsing parameters.
+    """
     df = params.Results
     cols = params.Results_columns
     assert isinstance(df, pd.DataFrame)
@@ -286,19 +326,33 @@ def prepare_seq_df(params):
 
 
 def prepare_seq_pool(df, params):
+    """Wraps an output of the `prepare_seq_df` into a pool of `SeqGene`s"""
     cols = params.Results_columns
-    return [SeqGene(seq, tuple(map(int, p.split('-'))), -s) for _, seq, p, s in df[
-        [cols.seq_subset, cols.pos, cols.affinity]].itertuples()]
+    return tuple(
+        SeqGene(seq, tuple(map(int, p.split('-'))), -s)
+        for _, seq, p, s in df[[cols.seq_subset, cols.pos, cols.affinity]].itertuples())
 
 
 def prepare_data(params: ParsingParams) -> ParsingResult:
-    # TODO: docs for the interface function
+    """
+    A primary interface function. If `params.Seq_df` is `True`,
+    will prepare a `DataFrame` provided via `params.Results` and create a pool of `SeqGene`s from it.
+    Otherwise, will prepare a pool of `EdgeGenes` for graph-based optimization.
+    The filtering workflow can be inferred from `params`,
+    `prepare_df` (for the pool of `EdgeGene`s) and
+    `prepare_seq_df` (for the pool of `SeqGene`s, and their `logging` output.
+    :param params: A dataclass holding parsing parameters.
+    :return: A `ParsingParams` namedtuple with three elements:
+    (1) a prepared `DataFrame`, (2) a `DataFrame` with singletons
+    (without any filtering  applied; `None` in case `params.Seq_df is `True`), and
+    (3) a pool of genes for the GA.
+    """
     if params.Seq_df:
         df = prepare_seq_df(params)
         return ParsingResult(df, None, prepare_seq_pool(df, params))
     else:
         df, singletons = prepare_df(params)
-        return ParsingResult(df, singletons, prepare_pool(df, params))
+        return ParsingResult(df, singletons, prepare_graph_pool(df, params))
 
 
 if __name__ == '__main__':
