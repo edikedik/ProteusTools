@@ -1,8 +1,8 @@
 from more_itertools import take
 
-from ..genetic.base import GeneticParams
-from ..genetic.ga import GA
-from ..genetic.individual import GraphIndividual
+from ProteusTools.genetic.base import GeneticParams
+from ProteusTools.genetic.ga import GA
+from ProteusTools.genetic.individual import GraphIndividual
 from .fixtures import generate_graph_genes
 
 

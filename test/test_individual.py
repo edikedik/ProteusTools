@@ -6,8 +6,8 @@ from statistics import median
 
 import numpy as np
 
-from ..genetic.base import EdgeGene, SeqGene
-from ..genetic.individual import GraphIndividual, AverageIndividual, SeqIndividual
+from ProteusTools.genetic.base import EdgeGene, SeqGene
+from ProteusTools.genetic.individual import GraphIndividual, AverageIndividual, SeqIndividual
 from .fixtures import random_graph_genes, random_seq_genes
 
 

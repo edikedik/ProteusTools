@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ..protmc.basic.bias import Bias
+from ProteusTools.protmc.basic.bias import Bias
 
 
 def random_variable():

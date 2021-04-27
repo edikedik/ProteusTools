@@ -4,10 +4,10 @@ import numpy as np
 import pytest
 from more_itertools import distribute, partition
 
-from ..genetic import EdgeGene, GraphIndividual
-from ..genetic.base import Record
-from ..genetic.crossover import exchange_fraction, recombine_genes_uniformly, take_unchanged
-from ..genetic.mutator import Mutator, BucketMutator
+from ProteusTools.genetic import EdgeGene, GraphIndividual
+from ProteusTools.genetic.base import Record
+from ProteusTools.genetic.crossover import exchange_fraction, recombine_genes_uniformly, take_unchanged
+from ProteusTools.genetic.mutator import Mutator, BucketMutator
 from .fixtures import random_graph_genes
 
 

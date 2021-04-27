@@ -4,8 +4,8 @@ from random import choices
 import numpy as np
 import pytest
 
-from ..genetic.base import EdgeGene, SeqGene
-from ..genetic.individual import GraphIndividual
+from ProteusTools.genetic.base import EdgeGene, SeqGene
+from ProteusTools.genetic.individual import GraphIndividual
 
 
 def generate_graph_genes(
