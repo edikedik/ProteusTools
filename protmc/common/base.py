@@ -46,6 +46,8 @@ PRO P PG
 GLY G PG"""
 
 Id = t.Optional[t.Union[int, str]]
+ConfigValue = t.Union[str, float, int]
+ConfigValues = t.Union[ConfigValue, t.List[ConfigValue], None]
 
 
 @dataclass

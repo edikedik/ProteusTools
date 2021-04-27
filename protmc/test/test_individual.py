@@ -104,12 +104,12 @@ def test_add_genes():
     individual = GraphIndividual(genes)
     # Such edge exists -> nothing added
     print(individual.genes())
-    individual.add_gene(EdgeGene(1, 2, 'A', 'B', 100, 100))
+    individual._add_gene(EdgeGene(1, 2, 'A', 'B', 100, 100))
     print(individual.genes())
     assert len(individual.genes()) == 3
     assert individual.score == scores
     # Such edge does not exist (different key) -> add edge
-    individual.add_gene(EdgeGene(1, 2, 'B', 'A', 1.0, 1.0))
+    individual._add_gene(EdgeGene(1, 2, 'B', 'A', 1.0, 1.0))
     assert len(individual.genes()) == 4
     # Without explicit update after calling `add_gene`
     # the scores are the same
@@ -148,26 +148,26 @@ def test_add_genes():
     g1, g2, g3 = EdgeGene(1, 2, 'A', 'B', 1.0, 1.0), EdgeGene(2, 3, 'A', 'C', 1.0, 0.1), EdgeGene(2, 3, 'B', 'C', 1.0,
                                                                                                   0.1)
     individual = GraphIndividual([g1], 0.5)
-    individual.add_gene(g2)
+    individual._add_gene(g2)
     # No B for node 2 -> nothing happens
     assert len(individual.genes()) == 1
     assert individual.genes()[0] == g1
     # B exists for node 2 -> addition
-    individual.add_gene(g3)
+    individual._add_gene(g3)
     assert len(individual.genes()) == 2
     assert set(individual.genes()) == {g1, g3}
     # No edge between 2 and 3
     g4 = EdgeGene(3, 4, 'C', 'B', 1.0, 1.0)
     individual = GraphIndividual([g1, g4], 0.5)
     # No B for node 2 -> nothing happens
-    individual.add_gene(g2)
+    individual._add_gene(g2)
     assert len(individual.genes()) == 2 and g2 not in individual.genes()
     # Both node keys match -> addition
-    individual.add_gene(g3)
+    individual._add_gene(g3)
     assert len(individual.genes()) == 3 and g3 in individual.genes()
     individual = GraphIndividual([g1, g4], 0.0)
     # g2 becomes strong edge -> addition
-    individual.add_gene(g2)
+    individual._add_gene(g2)
     assert len(individual.genes()) == 3 and g2 in individual.genes()
 
 

@@ -4,8 +4,7 @@ from collections.abc import MutableMapping
 from copy import deepcopy
 from itertools import chain
 
-ConfigValue = t.Union[str, float, int]
-ConfigValues = t.Union[ConfigValue, t.List[ConfigValue], None]
+from ..common.base import ConfigValue, ConfigValues
 
 
 # TODO: Remove redundant whitespaces and newlines between groups and fields
