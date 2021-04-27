@@ -8,21 +8,19 @@ README = (HERE / "README.md").read_text()
 
 setup(
     name='ProteusTools',
-    version='0.2dev1',
+    version='0.2.dev1',
     author='Ivan Reveguk',
     author_email='ivan.reveguk@polytechnique.edu',
     description='Various workflows built around protMC',
     long_description=README,
     long_description_content_type="text/markdown",
     classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Linux",
+        "Programming Language :: Python :: 3.8",
     ],
     python_requires='>=3.8',
     install_requires=[
         'ray>=1.2.0',
-        'genetic @ git+https://github.com/skoblov-lab/genetic.git@0.2dev1',
+        'genetic @ git+https://github.com/skoblov-lab/genetic.git@0.2.dev1',
         'networkx>=2.5.1',
         'click>=7.1.2',
         'pandas>=1.1.3',
@@ -36,6 +34,5 @@ setup(
             'MC.conf'
         ]
     },
-    scripts=['ProteusTools/protmc/resources/protMC.exe'],
     packages=find_packages(),
 )
