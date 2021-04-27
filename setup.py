@@ -34,5 +34,5 @@ setup(
             'MC.conf'
         ]
     },
-    packages=find_packages(['ProteusTools']),
+    packages=find_packages(exclude=['test']),
 )

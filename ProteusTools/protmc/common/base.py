@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from ..resources import PROTMC_PATH
+from ProteusTools.protmc import PROTMC_PATH
 
 Summary = t.NamedTuple('Summary', [
     ('num_unique', int), ('num_unique_merged', int), ('coverage', float),

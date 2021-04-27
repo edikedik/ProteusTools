@@ -18,7 +18,7 @@ from ..operators.aggregator import AffinityAggregator
 from ..operators.executor import GenericExecutor
 from ..operators.flattener import Flattener, flatten_pair
 from ..operators.worker import Worker, ADAPT, MC
-from ..resources import ADAPT_CONF_PATH, MC_CONF_PATH, PROTMC_PATH
+from ProteusTools.protmc import ADAPT_CONF_PATH, MC_CONF_PATH, PROTMC_PATH
 
 _UnorderedQuadruplet = t.Tuple[Worker, Worker, Worker, Worker]
 _OrderedQuadruplet = t.Tuple[ADAPT, MC, ADAPT, MC]
