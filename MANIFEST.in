@@ -1,1 +1,1 @@
-include *.conf *.exe
+recursive-include *.conf *.exe
