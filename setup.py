@@ -19,6 +19,7 @@ setup(
     ],
     python_requires='>=3.8',
     install_requires=[
+        'setuptools-git',
         'biotite>=0.27.0',
         'ray>=1.2.0',
         'genetic @ git+https://github.com/skoblov-lab/genetic.git@0.2.dev1',
@@ -30,11 +31,7 @@ setup(
     ],
     include_package_data=True,
     package_data={
-        'resources': [
-            'protMC.exe',
-            'ADAPT.conf',
-            'MC.conf'
-        ]
+        '': ['*.conf', '*.exe']
     },
     packages=find_packages(exclude=['test']),
 )
