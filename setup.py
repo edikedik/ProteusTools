@@ -19,6 +19,7 @@ setup(
     ],
     python_requires='>=3.8',
     install_requires=[
+        'biotite>=0.27.0',
         'ray>=1.2.0',
         'genetic @ git+https://github.com/skoblov-lab/genetic.git@0.2.dev1',
         'networkx>=2.5.1',
