@@ -28,6 +28,7 @@ setup(
         'tqdm>=4.50.2',
         'numpy>=1.19.1',
     ],
+    include_package_data=True,
     package_data={
         'resources': [
             'protMC.exe',
