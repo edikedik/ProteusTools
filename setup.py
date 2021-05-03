@@ -19,6 +19,10 @@ setup(
     ],
     python_requires='>=3.8',
     install_requires=[
+        'matplotlib>=3.3.4',
+        'seaborn>=0.11.1',
+        'logomaker>=0.8',
+        'more_itertools>=8.7.0',
         'setuptools-git',
         'biotite>=0.27.0',
         'ray>=1.2.0',

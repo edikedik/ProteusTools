@@ -1,6 +1,8 @@
 import logging
 import typing as t
 
+import ray
+
 from .worker import ADAPT, Worker
 from ..common.base import AbstractExecutor, AbstractCallback, Id
 
@@ -63,6 +65,30 @@ class GenericExecutor(AbstractExecutor):
             logging.debug(f'GenericExecutor {self.id} -- finished applying callbacks to {worker.id}')
         logging.info(f'GenericExecutor {self.id} -- finished executing worker {worker.id}')
         return worker
+
+
+def execute_workers(executor: AbstractExecutor, workers: t.Iterable[Worker]) -> t.List[Worker]:
+    """
+    Execute workers in parallel. Display minimalistic logging info.
+    :param executor: Any `Executor`, defining the execution workflow.
+    :param workers: Any number workers ready to be executed.
+    :return: Executed workers. Order is not preserved.
+    """
+    workers = list(workers)
+    workers_upd = []
+    handles = [_execute.remote(executor, worker) for worker in workers]
+
+    while handles:
+        done_ids, handles = ray.wait(handles)
+        done = ray.get(done_ids[0])
+        logging.info(f'Completed {done.id}. Done {len(workers) - len(handles)} out of {len(workers)}')
+        workers_upd.append(done)
+    return workers_upd
+
+
+@ray.remote
+def _execute(executor, worker):
+    return executor(worker)
 
 
 if __name__ == '__main__':
